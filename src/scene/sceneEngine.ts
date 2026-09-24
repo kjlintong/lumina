@@ -22,6 +22,7 @@ import {
   PerspectiveCamera,
   Scene,
 } from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Fixture } from '../core/types.js';
 import type { RenderBackend } from '../render/backend.js';
 import { buildLightFromFixture } from '../render/lightBuilder.js';
@@ -73,6 +74,7 @@ export class SceneEngine {
 
   private animationId: number | null = null;
   private lastTime = 0;
+  private orbitControls: OrbitControls;
 
   constructor(backend: RenderBackend, config: SceneEngineConfig = {}) {
     this.backend = backend;
@@ -87,6 +89,15 @@ export class SceneEngine {
     this.camera = new PerspectiveCamera(60, 1, 0.1, 100);
     this.camera.position.set(0, 3, 8);
     this.camera.lookAt(0, 1.5, 0);
+
+    // 轨道控制器：鼠标拖拽旋转、滚轮缩放、右键平移
+    this.orbitControls = new OrbitControls(this.camera, backend.canvas);
+    this.orbitControls.target.set(0, 1.5, 0);
+    this.orbitControls.enableDamping = true;
+    this.orbitControls.dampingFactor = 0.08;
+    this.orbitControls.maxDistance = 20;
+    this.orbitControls.minDistance = 1;
+    this.orbitControls.maxPolarAngle = Math.PI * 0.85;
 
     // 光照
     this.sunLight = new DirectionalLight(0xffffff, 1);
@@ -243,6 +254,9 @@ export class SceneEngine {
       // 推进时间
       this.advanceTime(deltaTime);
 
+      // 更新轨道控制器
+      this.orbitControls.update();
+
       // 更新自动曝光
       if (this.autoExposure) {
         const exposure = this.autoExposure.update();
@@ -301,6 +315,7 @@ export class SceneEngine {
   /** 释放资源 */
   dispose(): void {
     this.stop();
+    this.orbitControls.dispose();
     this.backend.dispose();
   }
 }

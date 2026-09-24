@@ -26,9 +26,12 @@ function createMockBackend(): RenderBackend {
     supportsShadows: true,
   };
 
+  // jsdom 提供真实的 document.createElement，OrbitControls 需要完整的 DOM 事件接口
+  const canvas = document.createElement('canvas');
+
   return {
     type: 'webgl2',
-    canvas: { style: {} } as unknown as HTMLCanvasElement,
+    canvas,
     capabilities,
     getRenderer: vi.fn(),
     render: vi.fn(),
