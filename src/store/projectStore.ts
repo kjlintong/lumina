@@ -28,6 +28,14 @@ import { SceneSystem } from '../scene/sceneSystem.js';
 // project 内含 Set（Fixture.lockedFields），immer 需要 MapSet 插件才能 draft 它们
 enableMapSet();
 
+/**
+ * 无活跃场景时，手动亮度写入的 sceneLevels 键。
+ * FixturePanel 的亮度滑杆读/写 `sceneLevels[activeSceneKey ?? MANUAL_LEVEL_KEY]`，
+ * App 的 store→engine 订阅据此同步引擎亮度。它不是 SceneSystem 里的真实场景，
+ * 因此 applyScene 不会触碰它（手动亮度在场景切换间保持）。
+ */
+export const MANUAL_LEVEL_KEY = 'manual';
+
 // ---------------------------------------------------------------------------
 // 状态形状
 // ---------------------------------------------------------------------------
@@ -63,37 +71,37 @@ export interface ProjectState {
   sceneTransition: SceneTransitionInfo | null;
 
   // -- 活动区（需求侧） ------------------------------------------------------
-  addZone(type: ActivityZoneType, pos: readonly [number, number], name?: string): string;
+  addZone: (type: ActivityZoneType, pos: readonly [number, number], name?: string) => string;
   /** 删除区：**不级联删灯**，绑定灯自动解绑但保留原位（ADR-01） */
-  removeZone(zoneKey: string): void;
-  renameZone(zoneKey: string, name: string): void;
+  removeZone: (zoneKey: string) => void;
+  renameZone: (zoneKey: string, name: string) => void;
   /** 切换类型：同步工作面高度 / 目标照度 / 推荐色温（zoneTypes 模板） */
-  changeZoneType(zoneKey: string, type: ActivityZoneType): void;
-  moveZone(zoneKey: string, delta: readonly [number, number]): void;
-  rotateZone(zoneKey: string, rotY: number): void;
+  changeZoneType: (zoneKey: string, type: ActivityZoneType) => void;
+  moveZone: (zoneKey: string, delta: readonly [number, number]) => void;
+  rotateZone: (zoneKey: string, rotY: number) => void;
 
   // -- 灯具（供给侧） --------------------------------------------------------
-  addFixture(opts: FixtureOptions): string;
-  removeFixture(fixtureId: string): void;
+  addFixture: (opts: FixtureOptions) => string;
+  removeFixture: (fixtureId: string) => void;
   /**
    * 用户手动修改灯具字段。**手动改 = 锁定**（ADR-17）：被改的字段路径
    * （如 'electrical.cct'）同步写入 lockedFields，此后场景预设不再覆盖。
    */
-  updateFixture(fixtureId: string, patch: DeepPartial<Fixture> | ((f: Fixture) => void)): void;
+  updateFixture: (fixtureId: string, patch: DeepPartial<Fixture> | ((f: Fixture) => void)) => void;
   /** 手动移动灯具：处于启用绑定时自动解绑（ADR-02） */
-  moveFixture(fixtureId: string, pos: readonly [number, number, number]): { autoUnbound: boolean };
+  moveFixture: (fixtureId: string, pos: readonly [number, number, number]) => { autoUnbound: boolean };
 
   // -- 选择 ------------------------------------------------------------------
-  selectFixture(id: string | null): void;
-  selectZone(key: string | null): void;
+  selectFixture: (id: string | null) => void;
+  selectZone: (key: string | null) => void;
 
   // -- 锁定 / 场景 -----------------------------------------------------------
   /** 显式锁定字段路径（ADR-17） */
-  lockField(fixtureId: string, fieldPath: string): void;
+  lockField: (fixtureId: string, fieldPath: string) => void;
   /** 应用场景：写入 sceneLevels/cct 终值（尊重锁定），并登记平滑过渡 */
-  applyScene(sceneKey: string): void;
+  applyScene: (sceneKey: string) => void;
   /** 立即应用场景：写终值，不登记过渡 */
-  applySceneInstant(sceneKey: string): void;
+  applySceneInstant: (sceneKey: string) => void;
 }
 
 // ---------------------------------------------------------------------------

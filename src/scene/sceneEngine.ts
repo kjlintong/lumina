@@ -107,6 +107,12 @@ export class SceneEngine {
   private lastTime = 0;
   private orbitControls: OrbitControls;
 
+  /**
+   * 每帧回调（渲染循环内、render 之前调用）。App 用它把 sceneController.tick
+   * 挂进引擎循环，驱动场景过渡动画，避免再起一个 rAF。
+   */
+  private frameCallback: ((timeMs: number) => void) | null = null;
+
   constructor(backend: RenderBackend, config: SceneEngineConfig = {}) {
     this.backend = backend;
     this.timeHour = config.initialHour ?? 18.0;
@@ -257,6 +263,14 @@ export class SceneEngine {
   }
 
   /**
+   * 注册每帧回调（渲染循环内、render 之前调用）；传 null 解除。
+   * 回调参数是 rAF 时间戳；场景过渡等需要墙钟时间的逻辑应自行取 Date.now()。
+   */
+  setFrameCallback(cb: ((timeMs: number) => void) | null): void {
+    this.frameCallback = cb;
+  }
+
+  /**
    * 解析灯具当前应有的亮度级别：
    * 若该灯的 `control.sceneLevels[activeSceneKey]` 有值则用之（场景目标），
    * 否则沿用引擎已记录的 level，默认全亮（1）。
@@ -367,6 +381,9 @@ export class SceneEngine {
 
       // 推进时间
       this.advanceTime(deltaTime);
+
+      // 每帧回调（场景过渡动画等）
+      this.frameCallback?.(time);
 
       // 更新轨道控制器
       this.orbitControls.update();

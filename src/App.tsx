@@ -1,29 +1,145 @@
 import { useEffect, useRef, useState } from 'react';
-import { makeFixture } from './core/makeFixture.js';
+import type { Fixture } from './core/types.js';
 import { createBackend } from './render/backend.js';
+import type { BackendType } from './render/backend.js';
 import { SceneEngine } from './scene/sceneEngine.js';
+import { SceneController } from './scene/sceneController.js';
+import { MANUAL_LEVEL_KEY, useProjectStore } from './store/projectStore.js';
+import { ZonePanel } from './ui/panels/ZonePanel.js';
+import { FixturePanel } from './ui/panels/FixturePanel.js';
+import { ScenePanel } from './ui/panels/ScenePanel.js';
+import { IlluminancePanel } from './ui/panels/IlluminancePanel.js';
 
-type BackendType = 'webgpu' | 'webgl2';
+// ---------------------------------------------------------------------------
+// store → engine 同步（transient subscribe，不触发 React 重渲染）
+// ---------------------------------------------------------------------------
+
+function eqArr3(a: readonly number[], b: readonly number[]): boolean {
+  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+}
+
+function cctOf(f: Fixture): number {
+  const c = f.electrical.cct;
+  return typeof c === 'number' ? c : (c[0] + c[1]) / 2;
+}
+
+function lumensOf(f: Fixture): number | undefined {
+  return 'lumens' in f.photometric ? f.photometric.lumens : undefined;
+}
+
+function beamAngleOf(f: Fixture): number | undefined {
+  return 'beamAngle' in f.photometric ? f.photometric.beamAngle : undefined;
+}
 
 /**
- * Lumina 主应用组件。
- * 创建渲染后端 → 初始化场景引擎 → 渲染房间 + 灯具。
+ * 同步一盏已变更的灯具。
+ * 结构性变更（位置/姿态/配光/类型）才重建光源；仅色温变化走 setFixtureCct、
+ * 仅亮度变化走 setFixtureLevel —— 都不重建，滑杆拖动才够流畅。
+ */
+function syncChangedFixture(
+  engine: SceneEngine,
+  prev: Fixture,
+  next: Fixture,
+  activeSceneKey: string | null,
+): void {
+  const structural =
+    next.type !== prev.type ||
+    !eqArr3(prev.pos, next.pos) ||
+    prev.rot.pitch !== next.rot.pitch ||
+    prev.rot.yaw !== next.rot.yaw ||
+    lumensOf(prev) !== lumensOf(next) ||
+    beamAngleOf(prev) !== beamAngleOf(next);
+
+  if (structural) {
+    engine.updateFixture(next);
+  } else {
+    const cct = cctOf(next);
+    if (cct !== cctOf(prev)) engine.setFixtureCct(next.id, cct);
+  }
+
+  // 亮度：活跃场景或 manual 键有记录则同步引擎实况
+  const lvl = activeSceneKey
+    ? next.control.sceneLevels[activeSceneKey]
+    : next.control.sceneLevels[MANUAL_LEVEL_KEY];
+  if (typeof lvl === 'number') engine.setFixtureLevel(next.id, lvl);
+}
+
+/** 对比前后 fixture 集合，对引擎做 add / remove / update */
+function syncFixtures(
+  engine: SceneEngine,
+  prev: Record<string, Fixture>,
+  next: Record<string, Fixture>,
+  transitioning: boolean,
+  activeSceneKey: string | null,
+): void {
+  for (const id of Object.keys(prev)) {
+    if (!(id in next)) engine.removeFixture(id);
+  }
+  for (const [id, f] of Object.entries(next)) {
+    const pf = prev[id];
+    if (pf === undefined) {
+      engine.addFixture(f);
+      continue;
+    }
+    if (pf === f) continue;
+    // 场景过渡期间 level/cct 由 sceneController.tick 逐帧驱动，这里跳过，
+    // 避免把终值一次性写死造成闪烁（场景不改结构性字段）。
+    if (transitioning) continue;
+    syncChangedFixture(engine, pf, f, activeSceneKey);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// App
+// ---------------------------------------------------------------------------
+
+function formatHour(h: number): string {
+  const hh = Math.floor(h);
+  const mm = Math.round((h - hh) * 60);
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+/**
+ * Lumina 主应用。
+ * 中间 canvas 内建渲染引擎；左侧活动区/灯具面板，右侧场景/照度面板；
+ * 底部时间/速度/阴影控制。store 是唯一权威数据源，引擎是渲染投影。
  */
 export default function App() {
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<SceneEngine | null>(null);
-  const backendTypeRef = useRef<BackendType>('webgl2');
-  const degradationRef = useRef<string | null>(null);
+  const controllerRef = useRef<SceneController | null>(null);
+
   const [ready, setReady] = useState(false);
+  const [backendType, setBackendType] = useState<BackendType>('webgl2');
+  const [degradation, setDegradation] = useState<string | null>(null);
+
+  // 时间 / 速度 / 阴影控制（React 组件状态，调用 engine 对应方法）
+  const [timeValue, setTimeValue] = useState('18:00');
+  const [timeInfo, setTimeInfo] = useState('18:00');
+  const [sunset, setSunset] = useState(false);
+  const [speed, setSpeed] = useState(0.5);
+  const [shadows, setShadows] = useState(true);
+
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(true);
 
   useEffect(() => {
-    let engine: SceneEngine | null = null;
+    let disposed = false;
+    let canvas: HTMLCanvasElement | null = null;
+    let unsub: (() => void) | null = null;
+    let infoInterval: ReturnType<typeof setInterval> | null = null;
+
+    const onResize = () => {
+      const container = canvasContainerRef.current;
+      const engine = engineRef.current;
+      if (container && engine) engine.resize(container.clientWidth, container.clientHeight);
+    };
 
     async function init() {
       const container = canvasContainerRef.current;
       if (!container) return;
 
-      const canvas = document.createElement('canvas');
+      canvas = document.createElement('canvas');
       canvas.width = container.clientWidth;
       canvas.height = container.clientHeight;
       canvas.style.width = '100%';
@@ -36,12 +152,12 @@ export default function App() {
           width: container.clientWidth,
           height: container.clientHeight,
         });
+        if (disposed) {
+          result.backend.dispose();
+          return;
+        }
 
-        const bt = result.backend.type;
-        backendTypeRef.current = bt;
-        degradationRef.current = result.degradationReason ?? null;
-
-        engine = new SceneEngine(result.backend, {
+        const engine = new SceneEngine(result.backend, {
           roomWidth: 6,
           roomDepth: 4.5,
           roomHeight: 2.8,
@@ -49,132 +165,136 @@ export default function App() {
           timeSpeed: 0.5,
         });
         engineRef.current = engine;
+        const controller = new SceneController(engine);
+        controllerRef.current = controller;
 
-        // 添加示例灯具
-        const fixtures = [
-          makeFixture({ type: 'downlight', pos: [0, 2.7, 0], lumens: 500, beamAngle: 36, cct: 3000 }),
-          makeFixture({ type: 'downlight', pos: [-1.5, 2.7, 0], lumens: 500, beamAngle: 36, cct: 3000 }),
-          makeFixture({ type: 'downlight', pos: [1.5, 2.7, 0], lumens: 500, beamAngle: 36, cct: 3000 }),
-          makeFixture({ type: 'pendant', pos: [0, 1.8, -1.5], lumens: 800, cct: 2700 }),
-          makeFixture({ type: 'spot', pos: [-2.5, 2.7, -2], lumens: 300, beamAngle: 24, cct: 4000 }),
-          makeFixture({ type: 'sconce', pos: [2.9, 1.5, 0], lumens: 300, cct: 2700 }),
-          makeFixture({ type: 'floor', pos: [-2, 1.5, 1.5], lumens: 600, cct: 3000 }),
-        ];
+        // 初始灯具进引擎（订阅只处理之后的变更）
+        const st = useProjectStore.getState();
+        engine.setActiveScene(st.activeSceneKey);
+        for (const f of Object.values(st.project.fixtures)) engine.addFixture(f);
 
-        for (const f of fixtures) {
-          engine.addFixture(f);
-        }
+        // 订阅 store：transient，不触发 React 重渲染
+        unsub = useProjectStore.subscribe((state, prev) => {
+          const eng = engineRef.current;
+          if (!eng) return;
+          if (state.activeSceneKey !== prev.activeSceneKey) {
+            eng.setActiveScene(state.activeSceneKey);
+          }
+          const transitioning = controllerRef.current?.isRunning() ?? false;
+          syncFixtures(eng, prev.project.fixtures, state.project.fixtures, transitioning, state.activeSceneKey);
+        });
+
+        // 场景过渡动画挂进渲染循环（tick 内部用 Date.now()）
+        engine.setFrameCallback(() => controller.tick());
 
         engine.resize(container.clientWidth, container.clientHeight);
         engine.setCameraPosition(0, 3.5, 7);
         engine.start();
 
+        setBackendType(result.backend.type);
+        setDegradation(result.degradationReason ?? null);
         setReady(true);
 
-        // 处理窗口大小变化
-        const onResize = () => {
-          if (engine) {
-            engine.resize(container.clientWidth, container.clientHeight);
-          }
-        };
         window.addEventListener('resize', onResize);
-
-        // 控制 UI
-        const timeInput = document.getElementById('time-input') as HTMLInputElement | null;
-        const speedInput = document.getElementById('speed-input') as HTMLInputElement | null;
-        const shadowToggle = document.getElementById('shadow-toggle') as HTMLInputElement | null;
-
-        const updateTime = () => {
-          if (timeInput && engine) {
-            const parts = timeInput.value.split(':').map(Number);
-            const h = parts[0] ?? 0;
-            const m = parts[1] ?? 0;
-            const hour = h + m / 60;
-            engine.setHour(hour);
-            updateInfo();
-          }
-        };
-
-        const updateSpeed = () => {
-          if (speedInput && engine) {
-            engine.setTimeSpeed(parseFloat(speedInput.value));
-          }
-        };
-
-        const updateShadow = () => {
-          if (shadowToggle && engine) {
-            engine.setShadows(shadowToggle.checked);
-          }
-        };
-
-        timeInput?.addEventListener('input', updateTime);
-        speedInput?.addEventListener('input', updateSpeed);
-        shadowToggle?.addEventListener('change', updateShadow);
-
-        const timeInfoEl = document.getElementById('time-info');
-        const warningInfoEl = document.getElementById('warning-info');
-        const backendInfoEl = document.getElementById('backend-info');
-
-        function updateInfo() {
-          if (engine && timeInfoEl) {
-            const h = engine.getHour();
-            const hh = Math.floor(h);
-            const mm = Math.round((h - hh) * 60);
-            const hourStr = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-            timeInfoEl.textContent = `时间: ${hourStr}`;
-
-            if (warningInfoEl) {
-              if (engine.isSunsetActive()) {
-                warningInfoEl.textContent = '日落时段 — 暖光模拟中';
-              } else {
-                warningInfoEl.textContent = '';
-              }
-            }
-          }
-          if (backendInfoEl) {
-            backendInfoEl.textContent = `渲染后端: ${backendTypeRef.current.toUpperCase()}`;
-          }
-        }
-
-        // 定期更新 UI
-        const infoInterval = setInterval(updateInfo, 500);
-
-        // 清理
-        return () => {
-          window.removeEventListener('resize', onResize);
-          timeInput?.removeEventListener('input', updateTime);
-          speedInput?.removeEventListener('input', updateSpeed);
-          shadowToggle?.removeEventListener('change', updateShadow);
-          clearInterval(infoInterval);
-          if (engine) {
-            engine.dispose();
-            engine = null;
-          }
-          canvas.remove();
-        };
+        infoInterval = setInterval(() => {
+          const eng = engineRef.current;
+          if (!eng) return;
+          setTimeInfo(formatHour(eng.getHour()));
+          setSunset(eng.isSunsetActive());
+        }, 500);
       } catch (err) {
-        console.error('Lumina init failed:', err);
-        degradationRef.current = `初始化失败: ${err instanceof Error ? err.message : String(err)}`;
+        setDegradation(`初始化失败: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
     void init();
 
     return () => {
-      if (engine) {
-        engine.dispose();
-      }
+      disposed = true;
+      unsub?.();
+      if (infoInterval) clearInterval(infoInterval);
+      window.removeEventListener('resize', onResize);
+      engineRef.current?.dispose();
+      engineRef.current = null;
+      controllerRef.current = null;
+      canvas?.remove();
+      canvas = null;
     };
   }, []);
 
+  const handleTimeChange = (value: string) => {
+    setTimeValue(value);
+    const [h, m] = value.split(':').map(Number);
+    engineRef.current?.setHour((h ?? 0) + (m ?? 0) / 60);
+  };
+
+  const handleSpeedChange = (value: number) => {
+    setSpeed(value);
+    engineRef.current?.setTimeSpeed(value);
+  };
+
+  const handleShadowsChange = (enabled: boolean) => {
+    setShadows(enabled);
+    engineRef.current?.setShadows(enabled);
+  };
+
   return (
-    <div style={{ width: '100%', height: '100%' }}>
-      <div ref={canvasContainerRef} id="canvas-container" style={{ width: '100%', height: '100%' }} />
-      {!ready && (
-        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', fontSize: 18 }}>
-          加载中...
-        </div>
-      )}
+    <div className="app-root">
+      <div ref={canvasContainerRef} className="canvas-container" />
+
+      <div className="overlay">
+        <div className="title">Lumina — 灯光设计系统</div>
+        <div className="info">渲染后端: {backendType.toUpperCase()}</div>
+        <div className="info">时间: {timeInfo}</div>
+        {degradation && <div className="warning">{degradation}</div>}
+        {sunset && <div className="warning">日落时段 — 暖光模拟中</div>}
+      </div>
+
+      <aside className={`sidebar sidebar-left${leftOpen ? '' : ' collapsed'}`}>
+        <button type="button" className="sidebar-toggle" onClick={() => setLeftOpen((v) => !v)}>
+          {leftOpen ? '◀' : '▶'}
+        </button>
+        {leftOpen && (
+          <div className="sidebar-content">
+            <ZonePanel />
+            <FixturePanel />
+          </div>
+        )}
+      </aside>
+
+      <aside className={`sidebar sidebar-right${rightOpen ? '' : ' collapsed'}`}>
+        <button type="button" className="sidebar-toggle" onClick={() => setRightOpen((v) => !v)}>
+          {rightOpen ? '▶' : '◀'}
+        </button>
+        {rightOpen && (
+          <div className="sidebar-content">
+            <ScenePanel onApplyScene={(key) => controllerRef.current?.applyScene(key)} />
+            <IlluminancePanel />
+          </div>
+        )}
+      </aside>
+
+      <div className="controls">
+        <label>
+          时间: <input type="time" value={timeValue} step={600} onChange={(e) => handleTimeChange(e.target.value)} />
+        </label>
+        <label>
+          速度:{' '}
+          <input
+            type="range"
+            min={0}
+            max={3}
+            step={0.1}
+            value={speed}
+            onChange={(e) => handleSpeedChange(parseFloat(e.target.value))}
+          />
+        </label>
+        <label>
+          <input type="checkbox" checked={shadows} onChange={(e) => handleShadowsChange(e.target.checked)} /> 阴影
+        </label>
+      </div>
+
+      {!ready && !degradation && <div className="loading">加载中...</div>}
     </div>
   );
 }
