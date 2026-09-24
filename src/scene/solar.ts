@@ -48,10 +48,11 @@ export function solarPosition(
     azimuth = 2 * Math.PI - azimuth;
   }
 
+  // belowHorizon 用 epsilon 判断：日出日落时浮点误差会让 elevation 略小于 0
   return {
     elevation,
     azimuth,
-    belowHorizon: elevation < 0,
+    belowHorizon: elevation < -1e-10,
   };
 }
 
@@ -114,18 +115,20 @@ export function solarCct(elevation: number): number {
  * @returns { r, g, b } 0-1
  */
 export function solarColor(elevation: number): { r: number; g: number; b: number } {
+  const clamp = (v: number) => Math.max(0, Math.min(1, v));
   if (elevation <= 0) return { r: 0, g: 0, b: 0 };
   if (elevation <= Math.PI / 12) {
     // 地平线附近：橙红色
     const t = elevation / (Math.PI / 12);
-    return { r: 1.0, g: 0.5 + 0.3 * t, b: 0.2 + 0.3 * t };
+    return { r: 1.0, g: clamp(0.5 + 0.3 * t), b: clamp(0.2 + 0.3 * t) };
   }
   if (elevation <= Math.PI / 4) {
     // 上升期：橙→黄
-    const t = (elevation - Math.PI / 12) / (Math.PI / 12);
-    return { r: 1.0, g: 0.8 + 0.2 * t, b: 0.5 + 0.5 * t };
+    // 区间宽度 = π/4 - π/12 = π/6
+    const t = (elevation - Math.PI / 12) / (Math.PI / 6);
+    return { r: 1.0, g: clamp(0.8 + 0.2 * t), b: clamp(0.5 + 0.5 * t) };
   }
   // 高角度：暖白
   const t = Math.min(1, (elevation - Math.PI / 4) / (Math.PI / 4));
-  return { r: 1.0, g: 1.0, b: 0.8 + 0.2 * t };
+  return { r: 1.0, g: 1.0, b: clamp(0.8 + 0.2 * t) };
 }
