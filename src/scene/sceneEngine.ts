@@ -13,7 +13,7 @@
  * 架构依据：工程方案 §5.4（自动曝光）、§5.2（配光双轨）
  */
 
-import type { Object3D } from 'three';
+import type { Light, Object3D } from 'three';
 import {
   AmbientLight,
   Color,
@@ -25,7 +25,7 @@ import {
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Fixture } from '../core/types.js';
 import type { RenderBackend } from '../render/backend.js';
-import { buildLightFromFixture } from '../render/lightBuilder.js';
+import { buildLightFromFixture, cctToRGB } from '../render/lightBuilder.js';
 import { buildRoom } from '../render/room.js';
 import { AutoExposure } from '../render/autoExposure.js';
 import { solarColor, solarPosition } from './solar.js';
@@ -52,6 +52,23 @@ export interface SceneEngineConfig {
 const SUNSET_START = 17.0;
 const SUNSET_END = 20.0;
 
+/** 单盏灯在场景图中的登记项 */
+interface FixtureLightEntry {
+  /** 场景图根节点（光源 + 灯罩 Mesh） */
+  object: Object3D;
+  /** 物理光源（buildLightFromFixture 总能构建，但类型上允许缺省） */
+  light: Light | undefined;
+  /** 未调光时的原始强度（buildLightFromFixture 返回的 light.intensity） */
+  baseIntensity: number;
+  /** 配光是否为近似值（UI 标注用） */
+  approximated: boolean;
+}
+
+/** 亮度截断到 [0, 1] */
+function clamp01(v: number): number {
+  return Math.min(1, Math.max(0, v));
+}
+
 /**
  * 场景引擎：管理 Three.js 场景图、光源、太阳、曝光。
  */
@@ -70,7 +87,21 @@ export class SceneEngine {
   private dayOfYear: number;
   private timeSpeed: number;
 
-  private fixtureLights = new Map<string, { object: Object3D; approximated: boolean }>();
+  private fixtureLights = new Map<string, FixtureLightEntry>();
+
+  /**
+   * 每盏灯当前应用的亮度级别（0..1，1 = 全亮）。
+   * 与 `Fixture.control.sceneLevels` 的区别：这里是**渲染实况**（动画中逐帧变化），
+   * sceneLevels 是**数据模型**（场景目标，applyScene 时一次性落盘）。
+   */
+  private fixtureLevels = new Map<string, number>();
+
+  /**
+   * 当前激活的场景 key（由 sceneController / App 在场景切换时同步过来）。
+   * addFixture / updateFixture 重建光源后，优先按 `control.sceneLevels[activeSceneKey]`
+   * 恢复亮度，避免重建把灯重置成全亮（规格 缺口 2）。
+   */
+  private activeSceneKey: string | null = null;
 
   private animationId: number | null = null;
   private lastTime = 0;
@@ -140,11 +171,20 @@ export class SceneEngine {
     this.updateSunPosition();
   }
 
-  /** 添加灯具到场景 */
+  /** 添加灯具到场景；已存在时等价 updateFixture（重建） */
   addFixture(fixture: Fixture): void {
-    const { object, approximated } = buildLightFromFixture(fixture);
+    if (this.fixtureLights.has(fixture.id)) {
+      this.updateFixture(fixture);
+      return;
+    }
+    const { object, light, approximated } = buildLightFromFixture(fixture);
     this.scene.add(object);
-    this.fixtureLights.set(fixture.id, { object, approximated });
+    const baseIntensity = light ? light.intensity : 0;
+    this.fixtureLights.set(fixture.id, { object, light, baseIntensity, approximated });
+    // 应用当前亮度级别：优先该灯在当前场景下的 sceneLevels，默认全亮
+    const level = this.resolveLevel(fixture);
+    this.fixtureLevels.set(fixture.id, level);
+    if (light) light.intensity = baseIntensity * level;
   }
 
   /** 移除灯具 */
@@ -153,7 +193,81 @@ export class SceneEngine {
     if (entry) {
       this.scene.remove(entry.object);
       this.fixtureLights.delete(fixtureId);
+      this.fixtureLevels.delete(fixtureId);
     }
+  }
+
+  /**
+   * 更新灯具：移除旧 object、按最新 Fixture 重建并加回场景。
+   *
+   * 重建比原地改属性简单可靠（类型/姿态/配光都可能变）。重建后必须
+   * 重记 baseIntensity，并**重新应用当前 level**——否则重建会把亮度
+   * 重置成全亮，场景切换后的调光状态就丢了（规格 缺口 2）。
+   * 不存在时等价 addFixture。
+   */
+  updateFixture(fixture: Fixture): void {
+    const existing = this.fixtureLights.get(fixture.id);
+    if (!existing) {
+      this.addFixture(fixture);
+      return;
+    }
+    this.scene.remove(existing.object);
+    const { object, light, approximated } = buildLightFromFixture(fixture);
+    this.scene.add(object);
+    const baseIntensity = light ? light.intensity : 0;
+    this.fixtureLights.set(fixture.id, { object, light, baseIntensity, approximated });
+    // resolveLevel 优先读 sceneLevels[activeSceneKey]，否则保留重建前的 level
+    const level = this.resolveLevel(fixture);
+    this.fixtureLevels.set(fixture.id, level);
+    if (light) light.intensity = baseIntensity * level;
+  }
+
+  /**
+   * 设置灯具亮度级别：`light.intensity = baseIntensity * clamp(level, 0, 1)`。
+   * 只调强度，不重建光源——场景过渡动画每帧走这里。
+   */
+  setFixtureLevel(fixtureId: string, level: number): void {
+    const clamped = clamp01(level);
+    this.fixtureLevels.set(fixtureId, clamped);
+    const entry = this.fixtureLights.get(fixtureId);
+    if (entry?.light) {
+      entry.light.intensity = entry.baseIntensity * clamped;
+    }
+  }
+
+  /** 查询灯具当前亮度级别（过渡动画用它作为 from 端点）；未登记返回 undefined */
+  getFixtureLevel(fixtureId: string): number | undefined {
+    return this.fixtureLevels.get(fixtureId);
+  }
+
+  /**
+   * 设置灯具色温（K）：直接改 light.color（cctToRGB），不重建光源。
+   * 场景过渡期间每帧调用，比重建高效得多。
+   */
+  setFixtureCct(fixtureId: string, kelvin: number): void {
+    const entry = this.fixtureLights.get(fixtureId);
+    if (!entry?.light) return;
+    const { r, g, b } = cctToRGB(kelvin);
+    entry.light.color.setRGB(r, g, b);
+  }
+
+  /** 同步当前激活场景 key（影响 addFixture / updateFixture 的亮度恢复） */
+  setActiveScene(sceneKey: string | null): void {
+    this.activeSceneKey = sceneKey;
+  }
+
+  /**
+   * 解析灯具当前应有的亮度级别：
+   * 若该灯的 `control.sceneLevels[activeSceneKey]` 有值则用之（场景目标），
+   * 否则沿用引擎已记录的 level，默认全亮（1）。
+   */
+  private resolveLevel(fixture: Fixture): number {
+    const key = this.activeSceneKey;
+    if (key !== null) {
+      const v = fixture.control.sceneLevels[key];
+      if (typeof v === 'number') return clamp01(v);
+    }
+    return this.fixtureLevels.get(fixture.id) ?? 1;
   }
 
   /** 更新太阳位置（根据当前时间） */
