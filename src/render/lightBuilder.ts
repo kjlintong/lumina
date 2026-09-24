@@ -1,33 +1,94 @@
 /**
- * 灯具数据 → Three.js 光源对象转换器（P1）
+ * Fixture 数据 → Three.js 光源对象转换（P1 渲染层）
  *
- * 将 Fixture 数据模型转换为可渲染的 Three.js 光源对象。
- * 双后端差异：
- * - WebGPU 路径：IESSpotLight（真实配光，cd 单位）
- * - WebGL2 路径：SpotLight 近似 + UI 标注
+ * 把领域层 `Fixture`（供给侧实体，见 src/core/types.ts）翻译成场景图节点：
+ * 一个 `Object3D` 根，内含一枚物理光源 + 一枚用于可视化的灯罩 Mesh。
  *
- * 架构依据：工程方案 §5.2，docs/00-p0-version-verification.md §4
+ * 物理量口径（工程红线，见 types.ts 顶部注释 §6.3 / ADR-15）：
+ *   - `Fixture.electrical.cct` 是色温（K），**不是**颜色，必须经色温→RGB 转换。
+ *     用 Tanner Helland 近似：对黑体辐射曲线做分段解析拟合。
+ *   - `Fixture.photometric.lumens` 是光通量 Φ（lm，单位时间发出的总光功率）。
+ *     Three.js 的 SpotLight / PointLight 的 `intensity` 单位是**坎德拉 cd**
+ *     （单位立体角光强 I），RectAreaLight 的 `intensity` 单位是**勒克司 lx**
+ *     （被照面照度 E）。三者物理量不同，不能共用一个换算：
+ *       均匀向四周发射的光源：Φ = I · ∫dΩ = I · 4π  →  I = Φ / 4π
+ *     这里按均匀球面（全 4π 立体角）折算。对聚光灯这会把实际中心光强
+ *     估低约 (2π/Ω_beam) 倍 —— 这是**已知且可接受的近似**，因为真实配光
+ *     要读 IES 文件，而本阶段明确没有 IES 解析器（见 `approximated`）。
+ *   - RectAreaLight 走面积光源模型，输入近似取 Φ/10 的量级，
+ *     仅用于在场景中形成可读的面光响应，不代表实测照度。
+ *
+ * 配光双轨（ADR-18 / types.ts 红线 5）：
+ *   - `photometric.ies` 有值 → `isIES = true` 且 `approximated = true`。
+ *     本阶段**不解析**真实 IES 文件，只用参数化几何光近似其效果，
+ *     因此 `approximated` 仍为 true —— UI 必须继续标注「配光为近似值」。
+ *   - 无 IES → `isIES = false`，`approximated = false`（纯参数化，无需标注）。
+ *
+ * 阴影：所有物理光源 `castShadow = true`（配合 backend.ts 中
+ * `renderer.shadowMap.enabled = true` + `PCFSoftShadowMap`）。
+ * 例外：RectAreaLight 不支持阴影（Three.js 引擎限制），不进入该路径。
+ * 灯罩 Mesh 一律 `castShadow = receiveShadow = false`：它是光源本身的
+ * 可视化替身，若让它投射阴影，会把自己的光照成一片黑斑。
  */
 
 import {
+  CircleGeometry,
   Color,
-  DoubleSide,
   Mesh,
   MeshStandardMaterial,
   Object3D,
   PointLight,
   RectAreaLight,
-  SpotLight,
   SphereGeometry,
-  CircleGeometry,
+  SpotLight,
 } from 'three';
 import type { Light } from 'three';
-import { hasVerifiedIES, type CCTValue, type Fixture, type Photometric } from '../core/types.js';
+import type { Fixture, Photometric, ShadeForm } from '../core/types.js';
 
-/** 色温到 RGB 转换（Tanner Helland 近似算法） */
+/** 均匀球面折算系数：lm → cd（I = Φ / 4π） */
+const STERADIAN_SPHERE = 4 * Math.PI;
+
+/** 无光通量数据时的最低强度（避免完全看不见的黑灯） */
+const MIN_INTENSITY = 0.1;
+
+/** SpotLight 默认投射距离（米） */
+const SPOT_DISTANCE = 10;
+
+/** 全向点光源默认投射距离（米） */
+const POINT_DISTANCE = 5;
+
+/** SpotLight 半角下限：为 0 时 Three.js 会产生 NaN */
+const MIN_HALF_ANGLE = 0.02;
+
+/** SpotLight 阴影贴图尺寸（较大以维持光斑边缘质量） */
+const SHADOW_MAP_SIZE = 1024;
+
+/** 点光源阴影贴图尺寸（较小，遮挡面少） */
+const POINT_SHADOW_MAP_SIZE = 512;
+
+// ---------------------------------------------------------------------------
+// 物理量换算
+// ---------------------------------------------------------------------------
+
+/**
+ * 色温（K）→ 归一化 sRGB 分量。
+ *
+ * Tanner Helland 近似算法：temp 以 100K 为单位。
+ *   - ≤ 6600K：R 恒为 255，G / B 随色温单调变化；
+ *     B 在 ≤ 1900K 时为 0（极暖白光几乎无蓝分量）。
+ *   - > 6600K：R / G 随色温升高而衰减（越冷越蓝），B 恒为 255。
+ *
+ * 输入经 [1000, 40000] 截断：超出该区间公式无物理意义，
+ * 截断比静默返回 NaN 更安全。
+ *
+ * @param kelvin 色温，K
+ * @returns 归一化到 0..1 的 sRGB 分量
+ */
 export function cctToRGB(kelvin: number): { r: number; g: number; b: number } {
   const temp = Math.max(1000, Math.min(40000, kelvin)) / 100;
-  let r: number, g: number, b: number;
+  let r: number;
+  let g: number;
+  let b: number;
 
   if (temp <= 66) {
     r = 255;
@@ -42,180 +103,209 @@ export function cctToRGB(kelvin: number): { r: number; g: number; b: number } {
   return { r: r / 255, g: g / 255, b: b / 255 };
 }
 
-/** 从 CCTValue（number | readonly [min, max]）提取中心色温 */
-function extractCct(cct: CCTValue): number {
-  return typeof cct === 'number' ? cct : (cct[0] + cct[1]) / 2;
-}
-
-/** 光束角度转半角（弧度） */
+/** 光束角（度）→ 半角（弧度）。Three.js SpotLight 的 `angle` 是半角。 */
 function beamAngleToHalfAngle(beamAngle: number): number {
-  return (beamAngle * Math.PI) / 180 / 2;
+  return Math.max(MIN_HALF_ANGLE, ((beamAngle * Math.PI) / 180) / 2);
 }
 
-/** 从 Photometric 提取流明值（IES 路径无 lumens 字段，用 0 兜底） */
+/** 从 Photometric 取光通量（lm）。IES 分支无 `lumens` 字段，返回 0。 */
 function extractLumens(photometric: Photometric): number {
   return photometric.ies === undefined ? photometric.lumens : 0;
 }
 
-/** 从 Photometric 提取光束角（IES 路径无 beamAngle，用 60° 兜底） */
+/** 从 Photometric 取光束角（度）。IES 分支无 `beamAngle`，用 60° 兜底。 */
 function extractBeamAngle(photometric: Photometric): number {
   return photometric.ies === undefined ? photometric.beamAngle : 60;
 }
 
-/** 根据灯具形状生成小型可视化 Mesh（灯罩） */
-function buildShadeMesh(fixture: Fixture): Mesh {
-  const shade = fixture.shape.shade;
-  const mat = new MeshStandardMaterial({
-    color: new Color(shade.color),
-    roughness: shade.roughness,
-    metalness: shade.metalness,
-    transparent: shade.transmission > 0,
-    opacity: 1 - shade.transmission * 0.5,
-    side: DoubleSide,
-  });
+/**
+ * 配光是否声明了 IES 文件。
+ * 直接读 `photometric.ies !== undefined`：本阶段无法校验 IES 校验和，
+ * 声明即视为「走 IES 近似路径」。
+ */
+function declaresIES(photometric: Photometric): boolean {
+  return photometric.ies !== undefined;
+}
 
-  let geo: SphereGeometry | CircleGeometry;
-  const d = fixture.shape.diameter;
+// ---------------------------------------------------------------------------
+// 灯罩可视化
+// ---------------------------------------------------------------------------
 
-  switch (fixture.shape.form) {
+/** 按 shape.form 选择灯罩几何：球/盘类用贴合造型，其余一律小球兜底。 */
+function shadeGeometry(form: ShadeForm, diameter: number): SphereGeometry | CircleGeometry {
+  const radius = Math.max(0.005, diameter / 2);
+  switch (form) {
     case 'sphere':
-      geo = new SphereGeometry(d / 2, 16, 16);
-      break;
+      return new SphereGeometry(radius, 16, 12);
     case 'disc':
     case 'plane':
-      geo = new CircleGeometry(d / 2, 24);
-      break;
+      return new CircleGeometry(radius, 24);
     default:
-      geo = new SphereGeometry(d / 2, 12, 12);
-      break;
+      return new SphereGeometry(radius, 12, 8);
   }
-
-  const mesh = new Mesh(geo, mat);
-  mesh.position.set(...fixture.pos);
-  mesh.castShadow = false;
-  mesh.receiveShadow = false;
-  mesh.name = `${fixture.id}-shade`;
-  return mesh;
 }
 
-/** 光源构建结果 */
+// ---------------------------------------------------------------------------
+// 构建结果
+// ---------------------------------------------------------------------------
+
+/** buildLightFromFixture 的返回值 */
 export interface LightBuildResult {
-  /** 光源对象（添加到场景的根 Group） */
+  /** 场景图根节点：内含光源 + 灯罩 Mesh，整体加入场景即可 */
   object: Object3D;
-  /** 实际光源 */
+  /** 物理光源（本实现所有类型都能建模，故总有值） */
   light?: Light;
-  /** 灯罩 Mesh（可视化） */
-  shade: Mesh;
-  /** 是否使用真实 IES 配光 */
+  /** 声明了 IES 文件（但本阶段未真实解析，仍为近似） */
   isIES: boolean;
-  /** 配光是否为近似值 */
+  /** 配光是否为近似值（用于 UI 标注，工程红线 5） */
   approximated: boolean;
-  /** 灯具 ID */
-  fixtureId: string;
 }
+
+// ---------------------------------------------------------------------------
+// 入口
+// ---------------------------------------------------------------------------
 
 /**
- * 从 Fixture 数据构建 Three.js 光源对象。
+ * 由 Fixture 构建 Three.js 光源 + 灯罩。
  *
- * @param fixture Fixture 数据
- * @param usesIES 当前后端是否支持 IES（WebGPU: true, WebGL2: false）
- * @returns 光源构建结果
+ * 类型 → 光源映射：
+ *   downlight / recessed → SpotLight，朝正下方，半角取 beamAngle
+ *   spot                 → SpotLight，按 rot.pitch / rot.yaw 偏转
+ *   pendant              → PointLight（悬挂，全向）
+ *   linear               → RectAreaLight（长条面光）
+ *   cove                 → RectAreaLight（极窄面光，灯槽洗墙）
+ *   sconce               → PointLight（壁灯，全向）
+ *   floor                → PointLight（落地灯，全向）
+ *   table                → PointLight（台灯，投射距离较短）
+ *
+ * `mount` 表达安装姿态（ceiling / recessed / suspended / wall / floor /
+ * tabletop）；出光方向由类型 + `rot` 决定，`mount` 主要用于约束姿态合法性。
+ *
+ * @param f Fixture 数据（pos 为世界坐标，唯一权威数据源）
  */
-export function buildLightFromFixture(fixture: Fixture, usesIES: boolean): LightBuildResult {
+export function buildLightFromFixture(f: Fixture): LightBuildResult {
+  const [fx, fy, fz] = f.pos;
+
   const group = new Object3D();
-  group.name = fixture.id;
+  group.name = f.id;
+  group.position.set(fx, fy, fz);
 
-  const cct = extractCct(fixture.electrical.cct);
-  const { r, g, b } = cctToRGB(cct);
+  // --- 色温 → 颜色 --------------------------------------------------------
+  // cct 可以是固定值或可调区间；区间取中点作为渲染色。
+  const kelvin =
+    typeof f.electrical.cct === 'number'
+      ? f.electrical.cct
+      : (f.electrical.cct[0] + f.electrical.cct[1]) / 2;
+  const { r, g, b } = cctToRGB(kelvin);
   const color = new Color(r, g, b);
-  const lumens = extractLumens(fixture.photometric);
 
-  // 强度转换：流明 → 坎德拉（点光源/聚光灯用 cd，面光用 lm/m²）
-  const candela = lumens > 0 ? lumens / (4 * Math.PI) : 0.1;
+  // --- 光通量 → 光强（lm → cd，均匀球面折算） -----------------------------
+  const lumens = extractLumens(f.photometric);
+  const candela = lumens > 0 ? lumens / STERADIAN_SPHERE : MIN_INTENSITY;
 
-  let light: Light | undefined;
-  let isIES = false;
-  let approximated = false;
+  // IES 分支：声明真实配光但未解析 → 必须标近似。
+  // 参数化分支：无 IES，纯几何光，不标近似。
+  const isIES = declaresIES(f.photometric);
+  const approximated = isIES;
 
-  const beamAngle = extractBeamAngle(fixture.photometric);
-  const hasIES = hasVerifiedIES(fixture.photometric);
+  const beamAngle = beamAngleToHalfAngle(extractBeamAngle(f.photometric));
 
-  switch (fixture.type) {
+  let light: Light;
+
+  switch (f.type) {
     case 'downlight': {
-      const spot = new SpotLight(color, candela, 10, beamAngleToHalfAngle(beamAngle), 0.3, 2);
-      spot.position.set(...fixture.pos);
-      spot.target.position.set(fixture.pos[0], 0, fixture.pos[2]);
+      // 嵌入式筒灯：固定朝正下方，光束角即配光半角。
+      // penumbra 0.25 模拟真实筒灯的柔边；decay 2 = 物理平方反比衰减。
+      const spot = new SpotLight(color, candela, SPOT_DISTANCE, beamAngle, 0.25, 2);
+      spot.position.set(fx, fy, fz);
+      spot.target.position.set(fx, 0, fz); // 指向地面上的同 x/z 点
       spot.castShadow = true;
-      spot.shadow.mapSize.set(1024, 1024);
-      light = spot;
-      isIES = usesIES && hasIES;
-      approximated = !isIES;
+      spot.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
       group.add(spot, spot.target);
+      light = spot;
       break;
     }
 
     case 'spot': {
-      const spot = new SpotLight(color, candela, 8, beamAngleToHalfAngle(beamAngle), 0.2, 2);
-      spot.position.set(...fixture.pos);
-      const yaw = fixture.rot.yaw;
-      const pitch = fixture.rot.pitch;
+      // 可调角度射灯：按 rot.pitch（俯仰，向下为正）+ rot.yaw（方位）投射。
+      const pitch = f.rot.pitch;
+      const yaw = f.rot.yaw;
+      const spot = new SpotLight(color, candela, SPOT_DISTANCE, beamAngle, 0.15, 2);
+      spot.position.set(fx, fy, fz);
+      // 单位方向向量外推 5m 得到 target 落点
+      const dist = 5;
       spot.target.position.set(
-        fixture.pos[0] + Math.cos(pitch) * Math.sin(yaw),
-        fixture.pos[1] - Math.sin(pitch),
-        fixture.pos[2] + Math.cos(pitch) * Math.cos(yaw),
+        fx + Math.cos(pitch) * Math.sin(yaw) * dist,
+        fy - Math.sin(pitch) * dist,
+        fz + Math.cos(pitch) * Math.cos(yaw) * dist,
       );
       spot.castShadow = true;
-      spot.shadow.mapSize.set(1024, 1024);
-      light = spot;
-      isIES = usesIES && hasIES;
-      approximated = !isIES;
+      spot.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
       group.add(spot, spot.target);
+      light = spot;
       break;
     }
 
     case 'pendant':
+    case 'sconce':
     case 'floor':
-    case 'table':
-    case 'sconce': {
-      const point = new PointLight(color, candela, fixture.type === 'table' ? 3 : 5, 2);
-      point.position.set(...fixture.pos);
+    case 'table': {
+      // 全向点光源：吊灯 / 壁灯 / 落地灯 / 台灯。
+      // decay 2 = 物理平方反比衰减；台灯距离更短（近距离照明）。
+      const distance = f.type === 'table' ? POINT_DISTANCE * 0.6 : POINT_DISTANCE;
+      const point = new PointLight(color, candela, distance, 2);
+      point.position.set(fx, fy, fz);
       point.castShadow = true;
-      point.shadow.mapSize.set(512, 512);
-      light = point;
-      approximated = true; // PointLight 无 IES
+      point.shadow.mapSize.set(POINT_SHADOW_MAP_SIZE, POINT_SHADOW_MAP_SIZE);
       group.add(point);
+      light = point;
       break;
     }
 
     case 'linear':
     case 'cove': {
-      const rect = new RectAreaLight(
-        color,
-        lumens / 10,
-        fixture.shape.diameter,
-        fixture.type === 'cove' ? 0.1 : 0.3,
-      );
-      rect.position.set(...fixture.pos);
-      light = rect;
-      approximated = true; // RectAreaLight 无 IES，GodraysNode 不支持面光
+      // 面光源：线性灯（linear）为长条，灯槽（cove）为极窄条用于洗墙。
+      // RectAreaLight.intensity 单位为 lx（照度），量级取 Φ/10 作可读近似。
+      // RectAreaLight 不支持阴影（引擎限制），故不设置 castShadow。
+      const width = f.shape.diameter;
+      const depthDim = f.type === 'cove' ? 0.1 : 0.3;
+      const rect = new RectAreaLight(color, lumens > 0 ? lumens / 10 : MIN_INTENSITY, width, depthDim);
+      rect.position.set(fx, fy, fz);
+      // 默认面朝 +Z，按 rot 旋转到出光方向
+      rect.rotation.set(f.rot.pitch, f.rot.yaw, 0);
       group.add(rect);
+      light = rect;
       break;
     }
 
     default: {
-      const point = new PointLight(color, candela, 5, 2);
-      point.position.set(...fixture.pos);
+      // 兜底：任何未显式映射的类型用 PointLight，保证场景不会缺一盏灯。
+      const point = new PointLight(color, candela, POINT_DISTANCE, 2);
+      point.position.set(fx, fy, fz);
       point.castShadow = true;
-      point.shadow.mapSize.set(512, 512);
-      light = point;
-      approximated = true;
+      point.shadow.mapSize.set(POINT_SHADOW_MAP_SIZE, POINT_SHADOW_MAP_SIZE);
       group.add(point);
+      light = point;
       break;
     }
   }
 
-  const shade = buildShadeMesh(fixture);
-  group.add(shade);
+  // --- 灯罩 Mesh（可视化替身） --------------------------------------------
+  const shade = f.shape.shade;
+  const shadeMat = new MeshStandardMaterial({
+    color: new Color(shade.color),
+    roughness: shade.roughness,
+    metalness: shade.metalness,
+  });
+  const shadeMesh = new Mesh(shadeGeometry(f.shape.form, f.shape.diameter), shadeMat);
+  shadeMesh.position.set(fx, fy, fz);
+  // 出光面朝向 = rot 姿态
+  shadeMesh.rotation.set(f.rot.pitch, f.rot.yaw, 0);
+  // 灯罩不投/收阴影：否则它会把自家光源照成黑斑
+  shadeMesh.castShadow = false;
+  shadeMesh.receiveShadow = false;
+  shadeMesh.name = `${f.id}-shade`;
+  group.add(shadeMesh);
 
-  return { object: group, light, shade, isIES, approximated, fixtureId: fixture.id };
+  return { object: group, light, isIES, approximated };
 }

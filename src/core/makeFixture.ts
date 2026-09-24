@@ -7,7 +7,7 @@
  * source 字段决定后续是否进入 BOM（§8）。
  */
 
-import type { Fixture, FixtureType, MountType, Photometric, ShadeForm } from './types.js';
+import type { CCTValue, Fixture, FixtureType, MountType, Photometric, ShadeForm } from './types.js';
 
 let fixtureSeq = 0;
 
@@ -26,7 +26,7 @@ export interface FixtureOptions {
   distribution?: string;
   /** IES 文件路径（给了就用真实配光） */
   ies?: string;
-  cct?: number;
+  cct?: CCTValue;
   cri?: number;
   watt?: number;
   dimFloor?: number;
