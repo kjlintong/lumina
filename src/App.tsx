@@ -4,6 +4,8 @@ import type { Object3D } from 'three';
 import type { ActivityZone, Fixture } from './core/types.js';
 import { createBackend } from './render/backend.js';
 import type { BackendType } from './render/backend.js';
+import { preloadIESFiles } from './render/iesCache.js';
+import { serializeProject, deserializeProject } from './core/serialize.js';
 import { SceneEngine } from './scene/sceneEngine.js';
 import { SceneController } from './scene/sceneController.js';
 import { MANUAL_LEVEL_KEY, useProjectStore } from './store/projectStore.js';
@@ -236,6 +238,19 @@ export default function App() {
       const container = canvasContainerRef.current;
       if (!container) return;
 
+      // 尝试从 localStorage 恢复项目
+      try {
+        const saved = localStorage.getItem('lumina-project');
+        if (saved) {
+          const loaded = deserializeProject(JSON.parse(saved) as Parameters<typeof deserializeProject>[0]);
+          if (Object.keys(loaded.fixtures).length > 0) {
+            useProjectStore.setState({ project: loaded });
+          }
+        }
+      } catch {
+        // localStorage 损坏则忽略，用默认工程
+      }
+
       canvas = document.createElement('canvas');
       canvas.width = container.clientWidth;
       canvas.height = container.clientHeight;
@@ -252,6 +267,23 @@ export default function App() {
         if (disposed) {
           result.backend.dispose();
           return;
+        }
+
+        // 预加载 IES 文件（异步，不阻塞渲染初始化）
+        const iesFixtures = Object.values(useProjectStore.getState().project.fixtures).filter(
+          (f) => f.photometric.ies !== undefined,
+        );
+        const iesPaths = [...new Set(iesFixtures.map((f) => f.photometric.ies!).filter(Boolean))];
+        if (iesPaths.length > 0) {
+          void preloadIESFiles(iesPaths).then(() => {
+            if (disposed) return;
+            // IES 就绪后重建有 IES 的灯具光源
+            const eng = engineRef.current;
+            if (!eng) return;
+            for (const f of Object.values(useProjectStore.getState().project.fixtures)) {
+              if (f.photometric.ies !== undefined) eng.updateFixture(f);
+            }
+          });
         }
 
         const engine = new SceneEngine(result.backend, {
@@ -283,6 +315,14 @@ export default function App() {
           const transitioning = controllerRef.current?.isRunning() ?? false;
           syncFixtures(eng, prev.project.fixtures, state.project.fixtures, transitioning, state.activeSceneKey);
           syncZones(eng, prev.project.zones, state.project.zones, prev.selectedZoneKey, state.selectedZoneKey);
+          // 自动保存到 localStorage（防抖：只在 project 对象引用变化时保存）
+          if (state.project !== prev.project) {
+            try {
+              localStorage.setItem('lumina-project', JSON.stringify(serializeProject(state.project)));
+            } catch {
+              // localStorage 满或不可用时静默失败
+            }
+          }
         });
 
         // 场景过渡动画挂进渲染循环（tick 内部用 Date.now()）
