@@ -121,6 +121,40 @@ describe('ADR-02：手动移动灯具自动解绑', () => {
     expect(autoUnbound).toBe(false);
     expect(project()).toBe(before);
   });
+
+  it('moveAndLockFixture：解绑 + 锁定 pos（参数面板位置编辑用，ADR-02 + ADR-17）', () => {
+    const { fixtureId } = setupBoundPair();
+
+    const { autoUnbound } = useProjectStore.getState().moveAndLockFixture(fixtureId, [2.5, 1.9, 2.5]);
+
+    // ADR-02：自动解绑
+    expect(autoUnbound).toBe(true);
+    const f = fixture(fixtureId);
+    expect(f.binding).toBeNull();
+    expect(f.pos).toEqual([2.5, 1.9, 2.5]);
+    // ADR-17：手动改过 pos 即锁定
+    expect(f.lockedFields.has('pos')).toBe(true);
+  });
+
+  it('moveAndLockFixture：未绑定的灯不报解绑，但仍锁定 pos', () => {
+    const id = useProjectStore.getState().addFixture({ type: 'downlight', pos: [0, 2.7, 0] });
+
+    const { autoUnbound } = useProjectStore.getState().moveAndLockFixture(id, [1, 2.7, 1]);
+
+    expect(autoUnbound).toBe(false);
+    expect(fixture(id).pos).toEqual([1, 2.7, 1]);
+    expect(fixture(id).lockedFields.has('pos')).toBe(true);
+  });
+});
+
+describe('通知：ADR-02 解绑提示', () => {
+  it('setNotice 写入文案，传 null 清除', () => {
+    expect(useProjectStore.getState().notice).toBeNull();
+    useProjectStore.getState().setNotice('该灯已脱离活动区跟随');
+    expect(useProjectStore.getState().notice).toBe('该灯已脱离活动区跟随');
+    useProjectStore.getState().setNotice(null);
+    expect(useProjectStore.getState().notice).toBeNull();
+  });
 });
 
 describe('ADR-13：区变换时绑定灯跟随', () => {

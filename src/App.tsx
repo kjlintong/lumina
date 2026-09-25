@@ -291,9 +291,19 @@ export default function App() {
     engineRef.current?.setShadows(enabled);
   };
 
+  // 解绑提示：store.notice 变化时显示 toast，4 秒后自动消失
+  const notice = useProjectStore((s) => s.notice);
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => useProjectStore.getState().setNotice(null), 4000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
   return (
     <div className="app-root">
       <div ref={canvasContainerRef} className="canvas-container" />
+
+      {notice && <div className="toast">{notice}</div>}
 
       <div className="overlay">
         <div className="title">Lumina — 灯光设计系统</div>

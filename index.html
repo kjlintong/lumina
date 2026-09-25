@@ -103,6 +103,9 @@
     .badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; }
     .badge-warn { background: #5a3a00; color: #f0a040; }
     .badge-ok { background: #003a00; color: #40f040; }
+
+    .toast { position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%); background: rgba(90,58,0,0.95); color: #f0a040; padding: 10px 18px; border-radius: 8px; font-size: 13px; border: 1px solid #f0a040; z-index: 10; animation: toast-in .25s ease; }
+    @keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
   </style>
 </head>
 <body>

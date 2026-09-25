@@ -90,6 +90,12 @@ export interface ProjectState {
   updateFixture: (fixtureId: string, patch: DeepPartial<Fixture> | ((f: Fixture) => void)) => void;
   /** 手动移动灯具：处于启用绑定时自动解绑（ADR-02） */
   moveFixture: (fixtureId: string, pos: readonly [number, number, number]) => { autoUnbound: boolean };
+  /** 参数面板位置编辑用：解绑（ADR-02）+ 锁定 pos（ADR-17） */
+  moveAndLockFixture: (fixtureId: string, pos: readonly [number, number, number]) => { autoUnbound: boolean };
+
+  // -- 通知 ------------------------------------------------------------------
+  notice: string | null;
+  setNotice: (text: string | null) => void;
 
   // -- 选择 ------------------------------------------------------------------
   selectFixture: (id: string | null) => void;
@@ -309,7 +315,27 @@ export const useProjectStore = create<ProjectState>()(
       return { autoUnbound };
     },
 
-    // -- 选择 ----------------------------------------------------------------
+    /**
+     * 手动移动灯具（参数面板位置编辑用）：解绑 + 锁定位置字段。
+     *
+     * 与 moveFixture 的分工：moveFixture 只解绑（ADR-02），用于拖拽等纯移动；
+     * 本方法给参数面板用——用户手动输入新坐标既是「手动移动」（应解绑，ADR-02）
+     * 又是「手动改字段」（应锁定 pos，ADR-17），两步合一。
+     */
+    moveAndLockFixture: (fixtureId, pos) => {
+      const { autoUnbound } = get().moveFixture(fixtureId, pos);
+      get().lockField(fixtureId, 'pos');
+      return { autoUnbound };
+    },
+
+    // -- 通知 ------------------------------------------------------------------
+
+    notice: null,
+    setNotice: (text) => {
+      set({ notice: text });
+    },
+
+    // -- 选择 ------------------------------------------------------------------
 
     selectFixture: (id) => {
       set({ selectedFixtureId: id });

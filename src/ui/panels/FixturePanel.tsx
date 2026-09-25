@@ -48,6 +48,8 @@ function parametric(p: Photometric): { lumens?: number; beamAngle?: number } {
 
 function FixtureForm({ fixture }: { fixture: Fixture }) {
   const updateFixture = useProjectStore((s) => s.updateFixture);
+  const moveAndLockFixture = useProjectStore((s) => s.moveAndLockFixture);
+  const setNotice = useProjectStore((s) => s.setNotice);
   const activeSceneKey = useProjectStore((s) => s.activeSceneKey);
 
   const id = fixture.id;
@@ -57,6 +59,15 @@ function FixtureForm({ fixture }: { fixture: Fixture }) {
 
   const levelKey = activeSceneKey ?? MANUAL_LEVEL_KEY;
   const level = fixture.control.sceneLevels[levelKey] ?? 1;
+
+  /**
+   * 位置编辑：手动输入新坐标 = 手动移动，触发解绑（ADR-02）+ 锁定 pos（ADR-17）。
+   * 解绑发生时给 UI 提示，否则用户不会知道这盏灯已脱离跟随。
+   */
+  const commitPos = (newPos: readonly [number, number, number]) => {
+    const { autoUnbound } = moveAndLockFixture(id, newPos);
+    if (autoUnbound) setNotice('该灯已脱离活动区跟随（手动移动自动解绑）');
+  };
 
   return (
     <div className="fixture-form">
@@ -69,9 +80,9 @@ function FixtureForm({ fixture }: { fixture: Fixture }) {
       <div className="field-group">
         <div className="field-group-title">位置 (m)</div>
         <div className="field-row">
-          <NumberField label="X" value={px} step={0.1} onCommit={(v) => updateFixture(id, { pos: [v, py, pz] })} />
-          <NumberField label="Y" value={py} step={0.1} onCommit={(v) => updateFixture(id, { pos: [px, v, pz] })} />
-          <NumberField label="Z" value={pz} step={0.1} onCommit={(v) => updateFixture(id, { pos: [px, py, v] })} />
+          <NumberField label="X" value={px} step={0.1} onCommit={(v) => commitPos([v, py, pz])} />
+          <NumberField label="Y" value={py} step={0.1} onCommit={(v) => commitPos([px, v, pz])} />
+          <NumberField label="Z" value={pz} step={0.1} onCommit={(v) => commitPos([px, py, v])} />
         </div>
       </div>
 
