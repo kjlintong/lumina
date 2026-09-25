@@ -175,6 +175,15 @@ export class SceneEngine {
         targetLuminance: 0.17,
         speed: 0.03,
       });
+      // 只有后端实现了像素采样（WebGL2）才接入采样器。
+      // WebGPU 后端不实现 getAverageLuminance（异步 render + buffer 回读
+      // 与同步调用模型冲突），此阶段曝光恒 1.0，后续单独接入。
+      // 无采样器时 AutoExposure.update() 自然走固定曝光路径，不会空转。
+      if (typeof this.backend.getAverageLuminance === 'function') {
+        this.autoExposure.setSampler({
+          getAverageLuminance: () => this.backend.getAverageLuminance?.() ?? 0,
+        });
+      }
     } else {
       this.autoExposure = null;
     }

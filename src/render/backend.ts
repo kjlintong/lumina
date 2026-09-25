@@ -11,6 +11,7 @@
 import type { Scene, Camera } from 'three';
 import type { WebGPURenderer } from 'three/webgpu';
 import type { WebGLRenderer } from 'three';
+import { averageLuminanceFromRGBA } from './luminance.js';
 
 /** 后端类型标识 */
 export type BackendType = 'webgpu' | 'webgl2';
@@ -79,6 +80,22 @@ export interface RenderBackend {
 
   /** 获取当前色调映射曝光 */
   getToneMappingExposure(): number;
+
+  /**
+   * 采样上一帧渲染的平均亮度（线性空间 0-1），供眼适应自动曝光使用。
+   *
+   * 仅 WebGL2 后端实现：渲染到 16×16 临时 render target 后
+   * `readRenderTargetPixels` 同步回读，`averageLuminanceFromRGBA` 求平均。
+   *
+   * WebGPU 后端**不实现**（返回 undefined）——WebGPU 的 `renderer.render` 是
+   * 异步的（返回 Promise），且回读需要 `requestAdapter`+`requestDevice` 的
+   * buffer copy + `mapAsync`，与 engine 当前的同步 render 调用模型冲突。
+   * 此阶段 WebGPU 走固定曝光（恒 1.0），后续单独接入（见 P5 规格文档）。
+   *
+   * 引擎构造时检测此方法存在才 `setSampler`；不存在则 autoExposure 自然
+   * 不采样，曝光保持初始值 1.0。
+   */
+  getAverageLuminance?(): number;
 
   /** 设置阴影使能 */
   setShadows(enabled: boolean): void;
@@ -201,7 +218,13 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
   }
 
   // WebGL2 兜底路径
-  const { WebGLRenderer, ACESFilmicToneMapping, PCFSoftShadowMap } = await import('three');
+  const {
+    WebGLRenderer,
+    ACESFilmicToneMapping,
+    PCFSoftShadowMap,
+    WebGLRenderTarget,
+    UnsignedByteType,
+  } = await import('three');
   const webglRenderer = new WebGLRenderer({
     canvas,
     antialias: true,
@@ -223,12 +246,29 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
     supportsShadows: true,
   };
 
+  // 自动曝光采样：渲染到 16×16 临时 RT 后 readRenderTargetPixels 回读。
+  // 16×16 = 256 像素，足够代表全屏平均亮度，单次回读代价可忽略。
+  // 不启用深度/模板缓冲（亮度采样不需要，省带宽）。
+  const SAMPLE_SIZE = 16;
+  const sampleRT = new WebGLRenderTarget(SAMPLE_SIZE, SAMPLE_SIZE, {
+    type: UnsignedByteType,
+    depthBuffer: false,
+    stencilBuffer: false,
+  });
+  const sampleBuffer = new Uint8Array(SAMPLE_SIZE * SAMPLE_SIZE * 4);
+
+  // 缓存最近一次 render 的 scene/camera，供采样时二次渲染到 RT
+  let lastScene: Scene | null = null;
+  let lastCamera: Camera | null = null;
+
   const backend: RenderBackend = {
     type: 'webgl2',
     canvas,
     capabilities,
     getRenderer: () => webglRenderer,
     render: (scene: Scene, camera: Camera) => {
+      lastScene = scene;
+      lastCamera = camera;
       webglRenderer.render(scene, camera);
     },
     resize: (w: number, h: number) => {
@@ -242,6 +282,23 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
       webglRenderer.toneMappingExposure = v;
     },
     getToneMappingExposure: () => webglRenderer.toneMappingExposure,
+    getAverageLuminance: () => {
+      if (!lastScene || !lastCamera) return 0;
+      // 渲染当前场景到 16×16 RT（暴露当前色调映射 + 曝光，
+      // 因此采样值是「用户视角看到的画面亮度」，不是后处理前线性值）
+      webglRenderer.setRenderTarget(sampleRT);
+      webglRenderer.render(lastScene, lastCamera);
+      webglRenderer.readRenderTargetPixels(
+        sampleRT,
+        0,
+        0,
+        SAMPLE_SIZE,
+        SAMPLE_SIZE,
+        sampleBuffer,
+      );
+      webglRenderer.setRenderTarget(null);
+      return averageLuminanceFromRGBA(sampleBuffer);
+    },
     setShadows: (enabled: boolean) => {
       webglRenderer.shadowMap.enabled = enabled;
     },
@@ -249,6 +306,7 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
       // 已设置
     },
     dispose: () => {
+      sampleRT.dispose();
       webglRenderer.dispose();
     },
   };
