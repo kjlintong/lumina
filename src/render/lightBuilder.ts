@@ -19,9 +19,11 @@
  *     仅用于在场景中形成可读的面光响应，不代表实测照度。
  *
  * 配光双轨（ADR-18 / types.ts 红线 5）：
- *   - `photometric.ies` 有值 → `isIES = true` 且 `approximated = true`。
- *     本阶段**不解析**真实 IES 文件，只用参数化几何光近似其效果，
- *     因此 `approximated` 仍为 true —— UI 必须继续标注「配光为近似值」。
+ *   - `photometric.ies` 有值且 IES 缓存就绪 → `isIES = true` 且 `approximated = false`。
+ *     此时从 IES 文件解析真实光强矩阵，计算光束角，生成投影纹理附加到 SpotLight.map，
+ *     UI 无需标注「配光为近似值」。
+ *   - `photometric.ies` 有值但 IES 未就绪/解析失败 → `isIES = true` 且 `approximated = true`。
+ *     回退到参数化几何光近似其效果，UI 必须标注「配光为近似值」。
  *   - 无 IES → `isIES = false`，`approximated = false`（纯参数化，无需标注）。
  *
  * 阴影：所有物理光源 `castShadow = true`（配合 backend.ts 中
@@ -42,8 +44,11 @@ import {
   SphereGeometry,
   SpotLight,
 } from 'three';
-import type { Light } from 'three';
+import type { DataTexture, Light } from 'three';
 import type { Fixture, Photometric, ShadeForm } from '../core/types.js';
+import { computeBeamAngle } from './iesParser.js';
+import { createSpotlightPatternTexture } from './iesTexture.js';
+import { getIESForFixture } from './iesCache.js';
 
 /** 均匀球面折算系数：lm → cd（I = Φ / 4π） */
 const STERADIAN_SPHERE = 4 * Math.PI;
@@ -199,16 +204,39 @@ export function buildLightFromFixture(f: Fixture): LightBuildResult {
   const { r, g, b } = cctToRGB(kelvin);
   const color = new Color(r, g, b);
 
-  // --- 光通量 → 光强（lm → cd，均匀球面折算） -----------------------------
-  const lumens = extractLumens(f.photometric);
+  // --- IES 配光数据（P6）-------------------------------------------------
+  // 从缓存获取 IES 数据；就绪时使用真实配光，未就绪时回退到参数化路径。
+  const iesResult = getIESForFixture(f);
+  const iesData = iesResult.status === 'ready' ? iesResult.data : undefined;
+  const hasIES = iesData !== undefined;
+
+  // --- 光通量 → 光强（lm → cd，均匀球面折算）-----------------------------
+  // IES 就绪：从 IES 文件读取光通量，用 computeTotalLumens 计算实际光通量
+  // 参数化路径：从 photometric.lumens 读取
+  const lumens = hasIES && iesData ? iesData.lumens : extractLumens(f.photometric);
   const candela = lumens > 0 ? lumens / STERADIAN_SPHERE : MIN_INTENSITY;
 
-  // IES 分支：声明真实配光但未解析 → 必须标近似。
-  // 参数化分支：无 IES，纯几何光，不标近似。
+  // --- IES 分支判定 -------------------------------------------------------
+  // isIES：声明了 IES 文件
+  // approximated：声明了 IES 但未成功解析（回退到参数化）→ true
+  //             成功解析了 IES → false（真实配光，UI 无需标注"近似"）
+  //             无 IES 声明 → false（纯参数化，不需要标注）
   const isIES = declaresIES(f.photometric);
-  const approximated = isIES;
+  const approximated = isIES && !hasIES;
 
-  const beamAngle = beamAngleToHalfAngle(extractBeamAngle(f.photometric));
+  // --- 光束角 -------------------------------------------------------------
+  // IES 就绪：从 IES 光强矩阵计算光束角
+  // 参数化路径：从 photometric.beamAngle 读取
+  const beamAngle = hasIES && iesData
+    ? beamAngleToHalfAngle(computeBeamAngle(iesData))
+    : beamAngleToHalfAngle(extractBeamAngle(f.photometric));
+
+  // --- IES 投影纹理（供 SpotLight.map）-----------------------------------
+  // 仅 SpotLight 类型使用（downlight / spot），PointLight/RectAreaLight 不用
+  let iesPatternTexture: DataTexture | null = null;
+  if (hasIES && iesData && (f.type === 'downlight' || f.type === 'spot')) {
+    iesPatternTexture = createSpotlightPatternTexture(iesData);
+  }
 
   let light: Light;
 
@@ -216,11 +244,15 @@ export function buildLightFromFixture(f: Fixture): LightBuildResult {
     case 'downlight': {
       // 嵌入式筒灯：固定朝正下方，光束角即配光半角。
       // penumbra 0.25 模拟真实筒灯的柔边；decay 2 = 物理平方反比衰减。
+      // IES 就绪时附加投影纹理，按真实配光调制光强。
       const spot = new SpotLight(color, candela, SPOT_DISTANCE, beamAngle, 0.25, 2);
       spot.position.set(fx, fy, fz);
       spot.target.position.set(fx, 0, fz); // 指向地面上的同 x/z 点
       spot.castShadow = true;
       spot.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+      if (iesPatternTexture) {
+        spot.map = iesPatternTexture;
+      }
       group.add(spot, spot.target);
       light = spot;
       break;
@@ -241,6 +273,9 @@ export function buildLightFromFixture(f: Fixture): LightBuildResult {
       );
       spot.castShadow = true;
       spot.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+      if (iesPatternTexture) {
+        spot.map = iesPatternTexture;
+      }
       group.add(spot, spot.target);
       light = spot;
       break;
