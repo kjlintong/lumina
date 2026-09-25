@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Raycaster, Vector2 } from 'three';
 import type { Object3D } from 'three';
-import type { Fixture } from './core/types.js';
+import type { ActivityZone, Fixture } from './core/types.js';
 import { createBackend } from './render/backend.js';
 import type { BackendType } from './render/backend.js';
 import { SceneEngine } from './scene/sceneEngine.js';
@@ -88,6 +88,54 @@ function syncFixtures(
     // 避免把终值一次性写死造成闪烁（场景不改结构性字段）。
     if (transitioning) continue;
     syncChangedFixture(engine, pf, f, activeSceneKey);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// store → engine 活动区同步（P4：可视化 + 家具）
+// ---------------------------------------------------------------------------
+
+/**
+ * 活动区是否需要重建 3D 表示：几何 / 朝向 / 类型变化才重建。
+ * name/lux/cct/need 等非几何字段不影响 3D，跳过以省重建。
+ */
+function zoneNeedsRebuild(prev: ActivityZone, next: ActivityZone): boolean {
+  return (
+    prev.type !== next.type ||
+    prev.pos[0] !== next.pos[0] ||
+    prev.pos[1] !== next.pos[1] ||
+    prev.size[0] !== next.size[0] ||
+    prev.size[1] !== next.size[1] ||
+    prev.rotY !== next.rotY ||
+    prev.planeH !== next.planeH
+  );
+}
+
+/**
+ * 对比前后 zones 集合，对引擎做 add / remove / update。
+ * 选中态变化也触发重建（选中区边框高亮，与 ZonePanel 呼应）。
+ */
+function syncZones(
+  engine: SceneEngine,
+  prev: Record<string, ActivityZone>,
+  next: Record<string, ActivityZone>,
+  prevSelectedKey: string | null,
+  selectedKey: string | null,
+): void {
+  for (const key of Object.keys(prev)) {
+    if (!(key in next)) engine.removeZone(key);
+  }
+  for (const [key, z] of Object.entries(next)) {
+    const selected = key === selectedKey;
+    const pz = prev[key];
+    if (pz === undefined) {
+      engine.addZone(z, selected);
+      continue;
+    }
+    const selectionChanged = (key === prevSelectedKey) !== selected;
+    if (pz === z && !selectionChanged) continue;
+    if (!zoneNeedsRebuild(pz, z) && !selectionChanged) continue;
+    engine.updateZone(z, selected);
   }
 }
 
@@ -217,10 +265,13 @@ export default function App() {
         const controller = new SceneController(engine);
         controllerRef.current = controller;
 
-        // 初始灯具进引擎（订阅只处理之后的变更）
+        // 初始灯具与活动区进引擎（订阅只处理之后的变更）
         const st = useProjectStore.getState();
         engine.setActiveScene(st.activeSceneKey);
         for (const f of Object.values(st.project.fixtures)) engine.addFixture(f);
+        for (const z of Object.values(st.project.zones)) {
+          engine.addZone(z, z.key === st.selectedZoneKey);
+        }
 
         // 订阅 store：transient，不触发 React 重渲染
         unsub = useProjectStore.subscribe((state, prev) => {
@@ -231,6 +282,7 @@ export default function App() {
           }
           const transitioning = controllerRef.current?.isRunning() ?? false;
           syncFixtures(eng, prev.project.fixtures, state.project.fixtures, transitioning, state.activeSceneKey);
+          syncZones(eng, prev.project.zones, state.project.zones, prev.selectedZoneKey, state.selectedZoneKey);
         });
 
         // 场景过渡动画挂进渲染循环（tick 内部用 Date.now()）

@@ -18,13 +18,16 @@ import {
   AmbientLight,
   Color,
   DirectionalLight,
+  Group,
   HemisphereLight,
   PerspectiveCamera,
   Scene,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { Fixture } from '../core/types.js';
+import type { ActivityZone, Fixture } from '../core/types.js';
 import type { RenderBackend } from '../render/backend.js';
+import { buildActivityZone } from '../render/activityZone.js';
+import { buildFurniture } from '../render/furniture.js';
 import { buildLightFromFixture, cctToRGB } from '../render/lightBuilder.js';
 import { buildRoom } from '../render/room.js';
 import { AutoExposure } from '../render/autoExposure.js';
@@ -88,6 +91,14 @@ export class SceneEngine {
   private timeSpeed: number;
 
   private fixtureLights = new Map<string, FixtureLightEntry>();
+
+  /**
+   * 活动区可视化 + 家具在场景图中的登记（zone.key -> wrapper Group）。
+   * wrapper 名为 `zone:${key}`，含两个子 group：buildActivityZone 的半透明
+   * 工作面包 + buildFurniture 的家具。名字带 `zone:` 前缀，不会与灯具 id
+   * 冲突，App 的 findFixtureId 不会把区/家具误当灯具拾取。
+   */
+  private zoneObjects = new Map<string, Group>();
 
   /**
    * 每盏灯当前应用的亮度级别（0..1，1 = 全亮）。
@@ -201,6 +212,47 @@ export class SceneEngine {
       this.fixtureLights.delete(fixtureId);
       this.fixtureLevels.delete(fixtureId);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 活动区可视化 + 家具（P4）
+  // ---------------------------------------------------------------------------
+
+  /** 添加活动区（可视化 + 家具）到场景；已存在时等价 updateZone（重建） */
+  addZone(zone: ActivityZone, selected = false): void {
+    if (this.zoneObjects.has(zone.key)) {
+      this.updateZone(zone, selected);
+      return;
+    }
+    const group = new Group();
+    group.name = `zone:${zone.key}`;
+    group.add(buildActivityZone(zone, selected));
+    group.add(buildFurniture(zone));
+    this.scene.add(group);
+    this.zoneObjects.set(zone.key, group);
+  }
+
+  /** 移除活动区（可视化与家具一并移除） */
+  removeZone(zoneKey: string): void {
+    const group = this.zoneObjects.get(zoneKey);
+    if (group) {
+      this.scene.remove(group);
+      this.zoneObjects.delete(zoneKey);
+    }
+  }
+
+  /**
+   * 更新活动区：移除旧 group、按最新 ActivityZone 重建并加回场景。
+   * 重建比原地改属性简单可靠（pos/size/rotY/planeH/type/selected 都可能变）。
+   * 不存在时等价 addZone。
+   */
+  updateZone(zone: ActivityZone, selected = false): void {
+    if (!this.zoneObjects.has(zone.key)) {
+      this.addZone(zone, selected);
+      return;
+    }
+    this.removeZone(zone.key);
+    this.addZone(zone, selected);
   }
 
   /**
