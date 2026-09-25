@@ -93,12 +93,15 @@ describe('SceneEngine', () => {
       expect(engine.getHour()).toBeCloseTo(18.0, 1);
     });
 
-    it('sets camera position', () => {
+    it('sets camera position inside the room', () => {
+      // 室内视角（P4b）：房间默认 6×4.5×2.8（x∈±3，y∈[0,2.8]，z∈±2.25），
+      // 相机必须在房间内，否则被全封闭墙体挡住看不到室内（家具/活动区不可见）。
       const engine = new SceneEngine(backend);
       const cam = engine.getCamera();
-      expect(cam.position.x).toBeCloseTo(0);
-      expect(cam.position.y).toBeCloseTo(3);
-      expect(cam.position.z).toBeCloseTo(8);
+      expect(Math.abs(cam.position.x)).toBeLessThan(3);
+      expect(cam.position.y).toBeGreaterThan(0);
+      expect(cam.position.y).toBeLessThan(2.8);
+      expect(Math.abs(cam.position.z)).toBeLessThan(2.25);
     });
   });
 

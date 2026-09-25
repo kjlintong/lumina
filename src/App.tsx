@@ -289,7 +289,8 @@ export default function App() {
         engine.setFrameCallback(() => controller.tick());
 
         engine.resize(container.clientWidth, container.clientHeight);
-        engine.setCameraPosition(0, 3.5, 7);
+        // 相机初始位由 SceneEngine 构造器给出（房间内东南角望中心，P4b 修复：
+        // 此前在房间外 (0,3.5,7)，被南墙挡住看不到室内家具）
         engine.start();
 
         setBackendType(result.backend.type);

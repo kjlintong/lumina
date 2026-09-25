@@ -134,13 +134,16 @@ export class SceneEngine {
     this.scene = new Scene();
     this.scene.background = new Color(0x0a0a1a);
 
+    // 相机初始在房间**内部**：这是室内灯光设计工具，用户以室内视角看灯效。
+    // 房间默认 6×4.5×2.8（中心在原点，x∈±3，z∈±2.25），相机放东南角附近
+    // 望向房间中心，两个初始活动区（休闲/用餐）都在视野内。
+    // 注意：墙是 BoxGeometry 全封闭体积，相机若在房间外会被墙挡住看不到内部。
     this.camera = new PerspectiveCamera(60, 1, 0.1, 100);
-    this.camera.position.set(0, 3, 8);
-    this.camera.lookAt(0, 1.5, 0);
+    this.camera.position.set(2.5, 1.8, 1.9);
 
     // 轨道控制器：鼠标拖拽旋转、滚轮缩放、右键平移
     this.orbitControls = new OrbitControls(this.camera, backend.canvas);
-    this.orbitControls.target.set(0, 1.5, 0);
+    this.orbitControls.target.set(0, 0.8, 0);
     this.orbitControls.enableDamping = true;
     this.orbitControls.dampingFactor = 0.08;
     this.orbitControls.maxDistance = 20;
@@ -483,10 +486,11 @@ export class SceneEngine {
     return this.camera;
   }
 
-  /** 设置相机位置 */
+  /** 设置相机位置（朝向房间中心工作面高度；同步轨道控制器目标点保持一致） */
   setCameraPosition(x: number, y: number, z: number): void {
     this.camera.position.set(x, y, z);
-    this.camera.lookAt(0, 1.5, 0);
+    this.orbitControls.target.set(0, 0.8, 0);
+    this.orbitControls.update();
   }
 
   /** 设置阴影 */
