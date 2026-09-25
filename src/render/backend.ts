@@ -12,6 +12,8 @@ import type { Scene, Camera } from 'three';
 import type { WebGPURenderer } from 'three/webgpu';
 import type { WebGLRenderer } from 'three';
 import { averageLuminanceFromRGBA } from './luminance.js';
+import { PostProcessing } from './postProcessing.js';
+import type { BloomSettings } from './postProcessing.js';
 
 /** 后端类型标识 */
 export type BackendType = 'webgpu' | 'webgl2';
@@ -41,6 +43,8 @@ export interface BackendOptions {
   /** 初始分辨率 */
   width?: number;
   height?: number;
+  /** 是否启用后处理管线（WebGL2 专属，默认 true） */
+  enablePostProcessing?: boolean;
 }
 
 /** 后端创建结果 */
@@ -102,6 +106,18 @@ export interface RenderBackend {
 
   /** 设置色调映射（当前仅 ACESFilmic） */
   setToneMapping(type: 'ACESFilmic'): void;
+
+  /**
+   * 设置 Bloom 后处理参数（仅 WebGL2 支持）。
+   * WebGPU 后端忽略此调用（WebGPU 路径的后期用 TSL 自研 pass）。
+   */
+  setBloom?(strength: number, radius: number, threshold: number): void;
+
+  /**
+   * 获取当前 Bloom 参数（仅 WebGL2）。
+   * WebGPU 后端返回 undefined。
+   */
+  getBloom?(): BloomSettings | undefined;
 
   /** 释放后端资源 */
   dispose(): void;
@@ -238,10 +254,20 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
   webglRenderer.shadowMap.enabled = true;
   webglRenderer.shadowMap.type = PCFSoftShadowMap;
 
+  // 后处理管线（WebGL2 专属，EffectComposer + UnrealBloomPass + OutputPass）
+  const enablePost = options.enablePostProcessing ?? true;
+  const postProcessing = enablePost
+    ? new PostProcessing(webglRenderer, {
+        strength: 0.35,
+        radius: 0.4,
+        threshold: 0.85,
+      })
+    : null;
+
   const capabilities: BackendCapabilities = {
     supportsIES: false,
     supportsGodrays: false,
-    supportsEffectComposer: true,
+    supportsEffectComposer: enablePost,
     toneMapping: 'ACESFilmic',
     supportsShadows: true,
   };
@@ -269,10 +295,15 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
     render: (scene: Scene, camera: Camera) => {
       lastScene = scene;
       lastCamera = camera;
-      webglRenderer.render(scene, camera);
+      if (postProcessing) {
+        postProcessing.render(scene, camera);
+      } else {
+        webglRenderer.render(scene, camera);
+      }
     },
     resize: (w: number, h: number) => {
       webglRenderer.setSize(w, h, false);
+      postProcessing?.resize(w, h);
     },
     setExposure: (v: number) => {
       webglRenderer.toneMappingExposure = v;
@@ -305,8 +336,13 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
     setToneMapping: (_type: 'ACESFilmic') => {
       // 已设置
     },
+    setBloom: (strength, radius, threshold) => {
+      postProcessing?.setBloom(strength, radius, threshold);
+    },
+    getBloom: () => postProcessing?.getBloom(),
     dispose: () => {
       sampleRT.dispose();
+      postProcessing?.dispose();
       webglRenderer.dispose();
     },
   };
