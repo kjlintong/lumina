@@ -11,7 +11,7 @@
  * 有活跃场景时改的是该场景的亮度；无活跃场景时写入 manual 键（不被场景覆盖）。
  */
 
-import type { CCTValue, Fixture, Photometric } from '../../core/types.js';
+import type { CCTValue, Fixture, FixtureType, Photometric } from '../../core/types.js';
 import { hasVerifiedIES } from '../../core/types.js';
 import { MANUAL_LEVEL_KEY, useProjectStore } from '../../store/projectStore.js';
 import { NumberField } from './NumberField.js';
@@ -19,6 +19,22 @@ import { Panel } from './Panel.js';
 
 const RAD2DEG = 180 / Math.PI;
 const DEG2RAD = Math.PI / 180;
+
+/** 灯类型中文名映射（供给侧展示用） */
+const FIXTURE_TYPE_LABELS: Record<FixtureType, string> = {
+  downlight: '筒灯',
+  spot: '射灯',
+  pendant: '吊灯',
+  linear: '线条灯',
+  cove: '灯带',
+  sconce: '壁灯',
+  floor: '落地灯',
+  table: '台灯',
+};
+
+function fixtureTypeLabel(type: FixtureType): string {
+  return FIXTURE_TYPE_LABELS[type] ?? type;
+}
 
 /** 色温显示值：固定值直接用，可调区间取中点 */
 function cctNumber(cct: CCTValue): number {
@@ -127,6 +143,45 @@ function FixtureForm({ fixture }: { fixture: Fixture }) {
   );
 }
 
+/** 灯具列表行：类型中文名 + id + 色温 + 光通量 */
+function FixtureListRow({ fixture, selected }: { fixture: Fixture; selected: boolean }) {
+  const selectFixture = useProjectStore((s) => s.selectFixture);
+  const { lumens } = parametric(fixture.photometric);
+  return (
+    <button
+      type="button"
+      className={`fixture-list-item${selected ? ' active' : ''}`}
+      onClick={() => selectFixture(fixture.id)}
+    >
+      <span className="fixture-list-name">
+        {fixtureTypeLabel(fixture.type)} <span className="fixture-id">{fixture.id}</span>
+      </span>
+      <span className="fixture-list-meta">
+        {cctNumber(fixture.electrical.cct)}K
+        {lumens !== undefined ? ` · ${lumens}lm` : ''}
+      </span>
+    </button>
+  );
+}
+
+/** 灯具选择入口：列出工程里所有灯，点选即编辑 */
+function FixtureList() {
+  const fixtures = useProjectStore((s) => s.project.fixtures);
+  const selectedFixtureId = useProjectStore((s) => s.selectedFixtureId);
+  const list = Object.values(fixtures);
+
+  if (list.length === 0) {
+    return <div className="empty">暂无灯具</div>;
+  }
+  return (
+    <div className="fixture-list">
+      {list.map((f) => (
+        <FixtureListRow key={f.id} fixture={f} selected={f.id === selectedFixtureId} />
+      ))}
+    </div>
+  );
+}
+
 export function FixturePanel() {
   const fixture = useProjectStore((s) =>
     s.selectedFixtureId ? s.project.fixtures[s.selectedFixtureId] : undefined,
@@ -134,10 +189,11 @@ export function FixturePanel() {
 
   return (
     <Panel title="灯具参数">
+      <FixtureList />
       {fixture ? (
         <FixtureForm fixture={fixture} />
       ) : (
-        <div className="empty">未选中灯具。点击场景中的灯，或在活动区面板旁选择。</div>
+        <div className="empty">未选中灯具。点击上方列表或场景中的灯。</div>
       )}
     </Panel>
   );

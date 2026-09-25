@@ -78,6 +78,16 @@
     .fixture-type { font-weight: 700; color: #f0c040; text-transform: capitalize; }
     .fixture-id { color: #777; font-size: 11px; }
 
+    /* 灯具选择列表 */
+    .fixture-list { display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow-y: auto; }
+    .fixture-list-item { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; width: 100%;
+      background: rgba(255,255,255,0.03); border: 1px solid #333; border-radius: 6px; padding: 6px 8px;
+      color: #eee; font-size: 12px; cursor: pointer; text-align: left; }
+    .fixture-list-item:hover { background: rgba(255,255,255,0.06); }
+    .fixture-list-item.active { border-color: #f0c040; background: rgba(240,192,64,0.08); }
+    .fixture-list-name { font-weight: 600; white-space: nowrap; }
+    .fixture-list-meta { color: #999; font-size: 11px; white-space: nowrap; }
+
     .empty { color: #777; font-size: 12px; padding: 8px 4px; text-align: center; }
 
     /* 场景按钮 */

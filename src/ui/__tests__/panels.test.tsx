@@ -82,6 +82,46 @@ describe('FixturePanel', () => {
     expect(screen.getByText(/未选中灯具/)).toBeInTheDocument();
   });
 
+  it('灯具列表列出所有灯（类型中文名 + 色温 + 光通量）', () => {
+    render(<FixturePanel />);
+    const fixtures = Object.values(state().project.fixtures);
+    expect(fixtures.length).toBeGreaterThan(0);
+    for (const f of fixtures) {
+      expect(screen.getByText(f.id)).toBeInTheDocument();
+    }
+    // 类型中文名映射生效（初始工程含筒灯）
+    expect(screen.getAllByText(/筒灯|吊灯|落地灯|射灯|台灯|壁灯|线条灯|灯带/).length).toBe(fixtures.length);
+  });
+
+  it('点击列表行选中该灯，参数表单立即显示', () => {
+    render(<FixturePanel />);
+    const f = Object.values(state().project.fixtures)[0];
+    if (!f) throw new Error('no fixture');
+    fireEvent.click(screen.getByText(f.id));
+    expect(state().selectedFixtureId).toBe(f.id);
+    // 表单出现（近似徽标 = 参数化灯具表单已渲染）
+    expect(screen.getByText('配光为近似值')).toBeInTheDocument();
+  });
+
+  it('当前选中的行带 active 高亮', () => {
+    render(<FixturePanel />);
+    const f = Object.values(state().project.fixtures)[0];
+    if (!f) throw new Error('no fixture');
+    fireEvent.click(screen.getByText(f.id));
+    // 选中后 id 同时出现在列表行与表单头部，取列表行那个
+    const rows = screen
+      .getAllByText(f.id)
+      .map((el) => el.closest('button.fixture-list-item'))
+      .filter(Boolean);
+    expect(rows[0]?.className).toContain('active');
+  });
+
+  it('无灯具时列表显示「暂无灯具」', () => {
+    useProjectStore.setState({ project: { ...state().project, fixtures: {} } });
+    render(<FixturePanel />);
+    expect(screen.getByText('暂无灯具')).toBeInTheDocument();
+  });
+
   it('参数化灯具显示「配光为近似值」徽标', () => {
     const id = Object.keys(state().project.fixtures)[0];
     if (!id) throw new Error('no fixture');

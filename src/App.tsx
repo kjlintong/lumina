@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { Raycaster, Vector2 } from 'three';
+import type { Object3D } from 'three';
 import type { Fixture } from './core/types.js';
 import { createBackend } from './render/backend.js';
 import type { BackendType } from './render/backend.js';
@@ -90,6 +92,40 @@ function syncFixtures(
 }
 
 // ---------------------------------------------------------------------------
+// 画布点击选灯（Raycaster 拾取；仅拾取，不改渲染）
+// ---------------------------------------------------------------------------
+
+const raycaster = new Raycaster();
+const pointerNdc = new Vector2();
+
+/** 从命中对象向上找 name 为 fixtureId 的祖先（灯组 name = fixture.id，子 mesh 名带后缀） */
+function findFixtureId(obj: Object3D | null, fixtures: Record<string, Fixture>): string | null {
+  let cur: Object3D | null = obj;
+  while (cur) {
+    if (cur.name && cur.name in fixtures) return cur.name;
+    cur = cur.parent;
+  }
+  return null;
+}
+
+/** 点击画布拾取灯具：命中则 selectFixture；未命中不改变选中态 */
+function pickFixture(engine: SceneEngine, canvas: HTMLCanvasElement, clientX: number, clientY: number): void {
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
+  pointerNdc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+  raycaster.setFromCamera(pointerNdc, engine.getCamera());
+  const hits = raycaster.intersectObjects(engine.getScene().children, true);
+  const fixtures = useProjectStore.getState().project.fixtures;
+  for (const hit of hits) {
+    const id = findFixtureId(hit.object, fixtures);
+    if (id) {
+      useProjectStore.getState().selectFixture(id);
+      return;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
 
@@ -133,6 +169,19 @@ export default function App() {
       const container = canvasContainerRef.current;
       const engine = engineRef.current;
       if (container && engine) engine.resize(container.clientWidth, container.clientHeight);
+    };
+
+    // 点击选灯：与 OrbitControls 共存，按下与抬起位移 < 5px 才算"点击"（排除旋转拖拽）
+    let downX = 0;
+    let downY = 0;
+    const onPointerDown = (e: PointerEvent) => {
+      downX = e.clientX;
+      downY = e.clientY;
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      if (Math.abs(e.clientX - downX) >= 5 || Math.abs(e.clientY - downY) >= 5) return;
+      const engine = engineRef.current;
+      if (engine && canvas) pickFixture(engine, canvas, e.clientX, e.clientY);
     };
 
     async function init() {
@@ -196,6 +245,8 @@ export default function App() {
         setReady(true);
 
         window.addEventListener('resize', onResize);
+        canvas.addEventListener('pointerdown', onPointerDown);
+        canvas.addEventListener('pointerup', onPointerUp);
         infoInterval = setInterval(() => {
           const eng = engineRef.current;
           if (!eng) return;
@@ -214,6 +265,8 @@ export default function App() {
       unsub?.();
       if (infoInterval) clearInterval(infoInterval);
       window.removeEventListener('resize', onResize);
+      canvas?.removeEventListener('pointerdown', onPointerDown);
+      canvas?.removeEventListener('pointerup', onPointerUp);
       engineRef.current?.dispose();
       engineRef.current = null;
       controllerRef.current = null;
