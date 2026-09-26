@@ -210,6 +210,9 @@ export default function App() {
   const [sunset, setSunset] = useState(false);
   const [speed, setSpeed] = useState(0);
   const [shadows, setShadows] = useState(true);
+  // 氛围层开关（P8b）：尘埃粒子 / 体积光柱。默认全开，低端设备可关。
+  const [dustVisible, setDustVisible] = useState(true);
+  const [lightShaftVisible, setLightShaftVisible] = useState(true);
 
   // Bloom 光晕参数（WebGL2 后处理，WebGPU 无此功能）
   const [bloom, setBloom] = useState<BloomSettings | null>(null);
@@ -421,6 +424,16 @@ export default function App() {
     engineRef.current?.setShadows(enabled);
   };
 
+  const handleDustVisibleChange = (enabled: boolean) => {
+    setDustVisible(enabled);
+    engineRef.current?.setDustVisible(enabled);
+  };
+
+  const handleLightShaftVisibleChange = (enabled: boolean) => {
+    setLightShaftVisible(enabled);
+    engineRef.current?.setLightShaftVisible(enabled);
+  };
+
   const handleBloomChange = (strength: number, radius: number, threshold: number) => {
     backendRef.current?.setBloom?.(strength, radius, threshold);
     setBloom({ strength, radius, threshold });
@@ -480,6 +493,10 @@ export default function App() {
               onBloomChange={handleBloomChange}
               godrays={godrays}
               onGodraysChange={handleGodraysChange}
+              dustVisible={dustVisible}
+              onDustVisibleChange={handleDustVisibleChange}
+              lightShaftVisible={lightShaftVisible}
+              onLightShaftVisibleChange={handleLightShaftVisibleChange}
             />
           </div>
         )}

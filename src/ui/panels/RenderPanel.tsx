@@ -23,6 +23,14 @@ interface RenderPanelProps {
   godrays: GodraysSettings | null;
   /** 更新 Godrays 参数 */
   onGodraysChange: (partial: Partial<GodraysSettings>) => void;
+  /** 当前尘埃粒子是否可见（P8b 性能开关） */
+  dustVisible: boolean;
+  /** 切换尘埃粒子可见性 */
+  onDustVisibleChange: (enabled: boolean) => void;
+  /** 当前体积光柱是否可见（P8b 性能开关） */
+  lightShaftVisible: boolean;
+  /** 切换体积光柱可见性 */
+  onLightShaftVisibleChange: (enabled: boolean) => void;
 }
 
 export function RenderPanel({
@@ -31,6 +39,10 @@ export function RenderPanel({
   onBloomChange,
   godrays,
   onGodraysChange,
+  dustVisible,
+  onDustVisibleChange,
+  lightShaftVisible,
+  onLightShaftVisibleChange,
 }: RenderPanelProps) {
   const [bloomOn, setBloomOn] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -233,6 +245,29 @@ export function RenderPanel({
           </label>
         </div>
       )}
+
+      {/* 氛围层（P8b）：尘埃粒子 + 体积光柱。性能开关——低端设备可关闭。
+          不受 postProcessing 限制：两者都是场景图对象（Points / Mesh），
+          不依赖 EffectComposer，WebGL2 与 WebGPU 后端均可用。 */}
+      <div className="field-group">
+        <div className="field-group-title">氛围层</div>
+        <label className="field">
+          <span className="field-label">尘埃粒子</span>
+          <input
+            type="checkbox"
+            checked={dustVisible}
+            onChange={(e) => onDustVisibleChange(e.target.checked)}
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">体积光柱</span>
+          <input
+            type="checkbox"
+            checked={lightShaftVisible}
+            onChange={(e) => onLightShaftVisibleChange(e.target.checked)}
+          />
+        </label>
+      </div>
 
       {/* 项目管理 */}
       <div className="field-group">
