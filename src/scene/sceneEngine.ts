@@ -47,6 +47,7 @@ import { buildFurniture } from '../render/furniture.js';
 import { buildLightFromFixture, cctToRGB, SHADE_EMISSIVE_SCALE } from '../render/lightBuilder.js';
 import { buildRoom } from '../render/room.js';
 import { buildSkyScene, setSkyBackdropColors, skyColors } from '../render/sky.js';
+import { buildSkyline } from '../render/skyline.js';
 import { buildLightShaft } from '../render/volumetricShaft.js';
 import { buildPlanter, buildPlant } from '../render/plants.js';
 import { AutoExposure } from '../render/autoExposure.js';
@@ -182,6 +183,13 @@ export class SceneEngine {
   /** 窗中心世界坐标（sky-scene 组原点） */
   private skyOrigin = new Vector3();
 
+  /**
+   * 窗外城市天际线（P8e）。嵌套在 sky-scene group 内，继承窗中心原点，
+   * 因此局部坐标即世界坐标偏移。静态剪影：MeshBasicMaterial 不受光照、
+   * 不参与阴影，始终可见。sky-scene 整组移除时本字段一并回收，不需单独 dispose。
+   */
+  private skyline: Group | null = null;
+
   /** 复用临时向量（每帧太阳圆盘定位，避免每帧 new Vector3） */
   private _skyTmp = new Vector3();
 
@@ -298,6 +306,13 @@ export class SceneEngine {
     this.skySunMat = sky.sun.material as MeshBasicMaterial;
     this.skyBackdrop = sky.backdrop;
     this.scene.add(sky.group);
+
+    // 窗外城市天际线（P8e）：替代 P8a 的三块扁平剪影色块，对标参考 2 的水岸城市。
+    // 嵌套进 sky-scene group，继承窗中心原点，因此局部坐标即世界坐标偏移。
+    // 排在楼群 z=-22..-34，远于 P8a 剪影（12..28）以免重叠；水面/吊桥在 -14/-18。
+    // 静态剪影，不参与阴影、不受光照，始终可见。sky-scene 整组移除时一并回收。
+    this.skyline = buildSkyline(new Vector3(0, 0, 0), new Vector3(0, 0, -1));
+    sky.group.add(this.skyline);
 
     // 尘埃粒子（P8b）：悬浮在房间中部高度，营造「空气中漂浮的尘埃」质感。
     // 体积略小于房间，避免粒子贴墙显得假。
