@@ -75,6 +75,16 @@ export function FloorPlan({ width = 220, height = 170 }: { width?: number; heigh
           stroke="rgba(255,255,255,0.35)"
           strokeWidth={1.5}
         />
+        {/* 房间外框内描边（P10：表达"墙厚"感，1px 暗色内缩） */}
+        <rect
+          x={r.x + 1}
+          y={r.y + 1}
+          width={r.w - 2}
+          height={r.h - 2}
+          fill="none"
+          stroke="rgba(0,0,0,0.35)"
+          strokeWidth={1}
+        />
 
         {/* 活动区（点击选中，与 ZonePanel 联动） */}
         {rects.map((z) => (
@@ -89,9 +99,9 @@ export function FloorPlan({ width = 220, height = 170 }: { width?: number; heigh
               y={z.y}
               width={z.w}
               height={z.h}
-              fill="rgba(240,160,64,0.18)"
+              fill="rgba(240,160,64,0.22)"
               stroke={selectedZoneKey === z.key ? '#f0a040' : 'rgba(240,160,64,0.5)'}
-              strokeWidth={selectedZoneKey === z.key ? 1.5 : 1}
+              strokeWidth={selectedZoneKey === z.key ? 2 : 1}
             />
             <text x={z.labelX} y={z.labelY} textAnchor="middle" fontSize={8} fill="#e0c870" className="floor-plan-label">
               {z.name.length > 6 ? z.name.slice(0, 6) + '…' : z.name}
@@ -99,8 +109,16 @@ export function FloorPlan({ width = 220, height = 170 }: { width?: number; heigh
           </g>
         ))}
 
-        {/* 北墙窗（开口） */}
-        <line x1={win.x1} y1={win.y} x2={win.x2} y2={win.y} stroke="#60a0d0" strokeWidth={3} />
+        {/* 北墙窗（P10：开口改画成蓝色半透明段，语义更明显） */}
+        <rect
+          x={win.x1}
+          y={win.y - 1.5}
+          width={win.x2 - win.x1}
+          height={3}
+          fill="#60a0d0"
+          opacity={0.85}
+          rx={0.5}
+        />
         <text x={(win.x1 + win.x2) / 2} y={win.y - 3} textAnchor="middle" fontSize={7} fill="#60a0d0">
           窗
         </text>
