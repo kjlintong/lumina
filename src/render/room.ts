@@ -154,20 +154,25 @@ function buildNorthWindow(
   bar(windowWidth + frameT, frameT, 0, windowSill + windowHeight); // 上框
   bar(windowWidth + frameT, frameT, 0, windowSill); // 下框
 
-  // 玻璃：MeshPhysicalMaterial.transmission 透光。
-  // 退化方案（性能不足时）：new MeshPhysicalMaterial({ transparent: true, opacity: 0.08, roughness: 0.05 })
+  // 玻璃：透明平面。
+  // 注意：不能用 `MeshPhysicalMaterial.transmission` —— 它**必须**配合
+  // `transparent: true` 才有视觉效果，否则会被忽略，玻璃退化成一块纯白
+  // 不透明面（这就是 P8a 遗留的「死白窗」根因）。直接 `transparent: true`
+  // + 极低 opacity：室外天空背板与太阳圆盘从窗口透出，窗框与窗台投出阴影。
   const glassMaterial = new MeshPhysicalMaterial({
-    color: 0xffffff,
+    color: 0xbfd8ff,
     metalness: 0.0,
     roughness: 0.05,
-    transmission: 0.9,
-    thickness: 0.02,
-    transparent: false, // transmission 模式不需要 transparent
+    transparent: true,
+    opacity: 0.12,
   });
   const glass = new Mesh(new PlaneGeometry(windowWidth, windowHeight), glassMaterial);
   glass.position.set(0, winCenterY, z);
-  glass.castShadow = false; // 玻璃不投影，否则窗框阴影会被整面玻璃吃掉
+  // 玻璃不投影，否则窗框阴影会被整面玻璃吃掉
+  glass.castShadow = false;
   glass.receiveShadow = false;
+  // 渲染在最上层：室内家具先画，玻璃后画并混合，保证室外内容可见
+  glass.renderOrder = 999;
   group.add(glass);
 
   return { group, wallSegments, frame, glass };

@@ -72,13 +72,21 @@ describe('buildRoom — 房间外壳构建', () => {
     }
   });
 
-  it('withWindow: true 时产生 ≥1 面玻璃，且玻璃 material 带 transmission', () => {
+  it('withWindow: true 时产生 ≥1 面玻璃，且玻璃为透明材质（室外可见）', () => {
     const { windows, windowFrame } = buildRoom(5, 4, 2.8, { withWindow: true });
     expect(windows.length).toBeGreaterThanOrEqual(1);
     expect(windowFrame.length).toBeGreaterThanOrEqual(1);
     const glass = windows[0]!;
-    expect(glass.material).toBeInstanceOf(MeshPhysicalMaterial);
-    expect((glass.material as MeshPhysicalMaterial).transmission).toBeGreaterThan(0);
+    const mat = glass.material as MeshPhysicalMaterial;
+    expect(mat).toBeInstanceOf(MeshPhysicalMaterial);
+    // 必须透明：室外天空/太阳圆盘才能从窗口透出（P8a 死白窗根因）
+    expect(mat.transparent).toBe(true);
+    expect(mat.opacity).toBeLessThan(0.5);
+    // 不得用 transmission：它只在 transparent=true 时生效，而旧实现的
+    // `transmission + transparent:false` 组合会让玻璃退化成纯白不透明面。
+    expect(mat.transmission ?? 0).toBe(0);
+    // renderOrder > 0：后画，保证混合时室外内容不被室内物体盖住
+    expect(glass.renderOrder).toBeGreaterThan(0);
   });
 
   it('withWindow: true 时玻璃不投影（否则窗框阴影被整面玻璃吃掉）', () => {
