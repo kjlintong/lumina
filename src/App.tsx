@@ -3,7 +3,8 @@ import { Raycaster, Vector2 } from 'three';
 import type { Object3D } from 'three';
 import type { ActivityZone, Fixture } from './core/types.js';
 import { createBackend } from './render/backend.js';
-import type { BackendType } from './render/backend.js';
+import type { BackendType, RenderBackend } from './render/backend.js';
+import type { BloomSettings } from './render/postProcessing.js';
 import { preloadIESFiles } from './render/iesCache.js';
 import { serializeProject, deserializeProject } from './core/serialize.js';
 import { SceneEngine } from './scene/sceneEngine.js';
@@ -13,6 +14,7 @@ import { ZonePanel } from './ui/panels/ZonePanel.js';
 import { FixturePanel } from './ui/panels/FixturePanel.js';
 import { ScenePanel } from './ui/panels/ScenePanel.js';
 import { IlluminancePanel } from './ui/panels/IlluminancePanel.js';
+import { RenderPanel } from './ui/panels/RenderPanel.js';
 
 // ---------------------------------------------------------------------------
 // store → engine 同步（transient subscribe，不触发 React 重渲染）
@@ -206,6 +208,10 @@ export default function App() {
   const [speed, setSpeed] = useState(0.5);
   const [shadows, setShadows] = useState(true);
 
+  // Bloom 光晕参数（WebGL2 后处理，WebGPU 无此功能）
+  const [bloom, setBloom] = useState<BloomSettings | null>(null);
+  const backendRef = useRef<RenderBackend | null>(null);
+
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
 
@@ -294,8 +300,12 @@ export default function App() {
           timeSpeed: 0.5,
         });
         engineRef.current = engine;
+        backendRef.current = result.backend;
         const controller = new SceneController(engine);
         controllerRef.current = controller;
+
+        // 初始化 Bloom 状态（WebGL2 后处理，WebGPU 无此功能）
+        setBloom(result.backend.getBloom?.() ?? null);
 
         // 初始灯具与活动区进引擎（订阅只处理之后的变更）
         const st = useProjectStore.getState();
@@ -362,6 +372,7 @@ export default function App() {
       canvas?.removeEventListener('pointerup', onPointerUp);
       engineRef.current?.dispose();
       engineRef.current = null;
+      backendRef.current = null;
       controllerRef.current = null;
       canvas?.remove();
       canvas = null;
@@ -382,6 +393,11 @@ export default function App() {
   const handleShadowsChange = (enabled: boolean) => {
     setShadows(enabled);
     engineRef.current?.setShadows(enabled);
+  };
+
+  const handleBloomChange = (strength: number, radius: number, threshold: number) => {
+    backendRef.current?.setBloom?.(strength, radius, threshold);
+    setBloom({ strength, radius, threshold });
   };
 
   // 解绑提示：store.notice 变化时显示 toast，4 秒后自动消失
@@ -426,6 +442,11 @@ export default function App() {
           <div className="sidebar-content">
             <ScenePanel onApplyScene={(key) => controllerRef.current?.applyScene(key)} />
             <IlluminancePanel />
+            <RenderPanel
+              postProcessing={backendType === 'webgl2'}
+              bloom={bloom}
+              onBloomChange={handleBloomChange}
+            />
           </div>
         )}
       </aside>
