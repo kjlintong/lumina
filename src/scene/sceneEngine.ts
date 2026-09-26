@@ -48,6 +48,7 @@ import { buildLightFromFixture, cctToRGB, SHADE_EMISSIVE_SCALE } from '../render
 import { buildRoom } from '../render/room.js';
 import { buildSkyScene, setSkyBackdropColors, skyColors } from '../render/sky.js';
 import { buildLightShaft } from '../render/volumetricShaft.js';
+import { buildPlanter, buildPlant } from '../render/plants.js';
 import { AutoExposure } from '../render/autoExposure.js';
 import { solarColor, solarPosition } from './solar.js';
 
@@ -201,6 +202,13 @@ export class SceneEngine {
   private shaftUserEnabled = true;
 
   /**
+   * 装饰绿植（P8d）。与房间一样属于静态几何，构造时一次性构建，不参与
+   * 阴影之外的任何每帧更新。与家具一致：castShadow = receiveShadow = true
+   * （遮挡上下文红线）。
+   */
+  private decorPlants: Group | null = null;
+
+  /**
    * 每帧回调（渲染循环内、render 之前调用）。App 用它把 sceneController.tick
    * 挂进引擎循环，驱动场景过渡动画，避免再起一个 rAF。
    */
@@ -309,6 +317,12 @@ export class SceneEngine {
     );
     this.scene.add(this.lightShaft);
 
+    // 装饰绿植（P8d）：放在窗侧角落，承接「绿植点缀」——冷色家具与暖色夕照
+    // 之间的色彩过渡。位置按房间尺寸算出，并避开已知活动区（lounge/dining）
+    // 与相机前景，保证不挡光、不挡视线。静态几何，不参与每帧更新。
+    this.decorPlants = this.buildDecorPlants(roomWidth, roomDepth);
+    this.scene.add(this.decorPlants);
+
     // 环境反射（P8a 根因 C）：RoomEnvironment PMREM 让 PBR 材质「活起来」。
     // 仅 WebGL2 路径生成；WebGPU / 测试 mock 安全跳过（见 initEnvironment）。
     this.initEnvironment();
@@ -325,6 +339,29 @@ export class SceneEngine {
    * 红线：业务层不直接 new WebGLRenderer，经 backend.getRenderer() 转型。
    * 测试 mock 的 getRenderer 返回 undefined，同样安全跳过。
    */
+  /**
+   * 构建装饰绿植组。放在窗侧（北墙）角落，承接参考项目的「绿植点缀」：
+   * 冷色家具与暖色夕照之间的色彩过渡，并让窗外光影有个可投影的主体。
+   *
+   * 位置说明：窗在北墙（z = -depth/2），相机在 (2.5, 1.8, 1.9) 望西北。
+   * 所以 NW 角落（x 负、z 负）最显眼且承接窗外光。这里避开光柱路径
+   * （窗中心 → 房间中心，即 z = -depth/2 → 0 的对角线），把绿植放在
+   * 更靠窗台、更靠边的一侧，让它投影在地板上但不挡光柱。
+   */
+  private buildDecorPlants(roomWidth: number, roomDepth: number): Group {
+    const group = new Group();
+    group.name = 'decor-plants';
+    const margin = 0.12; // 离墙边距，避免贴墙显得假
+    const x = -roomWidth / 2 + margin + 0.34; // 0.34 = 绿植半径
+    const z = -roomDepth / 2 + margin + 0.22;
+    const pot = buildPlant({ heightScale: 0.85, seed: 7, x, z });
+    group.add(pot);
+    // 一个略小的木箱绿植，放在旁边做层次
+    const planter = buildPlanter({ x: x + 0.62, z: z + 0.18, boxSize: 0.4 });
+    group.add(planter);
+    return group;
+  }
+
   private initEnvironment(): void {
     if (this.backend.type !== 'webgl2') return;
     const renderer = this.backend.getRenderer() as WebGLRenderer;
@@ -799,6 +836,19 @@ export class SceneEngine {
       if (shaftMat.map) shaftMat.map.dispose();
       shaftMat.dispose();
       this.lightShaft = null;
+    }
+    // 清理装饰绿植（P8d）：BoxGeometry/ConeGeometry/CylinderGeometry + 各自 material
+    if (this.decorPlants) {
+      this.scene.remove(this.decorPlants);
+      this.decorPlants.traverse((obj) => {
+        if ((obj as Mesh).isMesh) {
+          const m = obj as Mesh;
+          m.geometry.dispose();
+          if (Array.isArray(m.material)) m.material.forEach((mat) => mat.dispose());
+          else m.material.dispose();
+        }
+      });
+      this.decorPlants = null;
     }
     // 清理 PMREM 环境贴图产物（仅 WebGL2 路径生成；未生成时为 null，安全跳过）
     this.scene.environment = null;
