@@ -18,6 +18,7 @@ import { ScenePanel } from './ui/panels/ScenePanel.js';
 import { IlluminancePanel } from './ui/panels/IlluminancePanel.js';
 import { RenderPanel } from './ui/panels/RenderPanel.js';
 import { TimeAxis } from './ui/panels/TimeAxis.js';
+import { FloorPlan } from './ui/panels/FloorPlan.js';
 import { HudStats } from './ui/panels/HudStats.js';
 import type { HudStats as HudStatsData } from './ui/panels/HudStats.js';
 import { BuildBadge } from './ui/panels/BuildBadge.js';
@@ -494,6 +495,7 @@ export default function App() {
         </button>
         {leftOpen && (
           <div className="sidebar-content">
+            <FloorPlan />
             <ZonePanel />
             <FixturePanel />
           </div>
