@@ -17,6 +17,10 @@ import { FixturePanel } from './ui/panels/FixturePanel.js';
 import { ScenePanel } from './ui/panels/ScenePanel.js';
 import { IlluminancePanel } from './ui/panels/IlluminancePanel.js';
 import { RenderPanel } from './ui/panels/RenderPanel.js';
+import { TimeAxis } from './ui/panels/TimeAxis.js';
+import { HudStats } from './ui/panels/HudStats.js';
+import type { HudStats as HudStatsData } from './ui/panels/HudStats.js';
+import { BuildBadge } from './ui/panels/BuildBadge.js';
 
 // ---------------------------------------------------------------------------
 // store → engine 同步（transient subscribe，不触发 React 重渲染）
@@ -183,7 +187,7 @@ function pickFixture(engine: SceneEngine, canvas: HTMLCanvasElement, clientX: nu
 // App
 // ---------------------------------------------------------------------------
 
-function formatHour(h: number): string {
+export function formatHour(h: number): string {
   const hh = Math.floor(h);
   const mm = Math.round((h - hh) * 60);
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
@@ -219,6 +223,10 @@ export default function App() {
   // Godrays 体积光参数（WebGL2 后处理）
   const [godrays, setGodrays] = useState<GodraysSettings | null>(null);
   const backendRef = useRef<RenderBackend | null>(null);
+
+  // 渲染统计（P8c）：500ms 轮询 getRenderStats，不每帧 setState。
+  // triangles 为 0 表示后端不支持（WebGPU），转成 null 让 HUD 显示 "—"。
+  const [renderStats, setRenderStats] = useState<HudStatsData | null>(null);
 
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -384,6 +392,13 @@ export default function App() {
           if (!eng) return;
           setTimeInfo(formatHour(eng.getHour()));
           setSunset(eng.isSunsetActive());
+          // 渲染统计：triangles === 0 代表后端不支持（WebGPU），转 null 显示 "—"
+          const s = eng.getRenderStats();
+          setRenderStats({
+            triangles: s.triangles > 0 ? s.triangles : null,
+            objects: s.objects,
+            fps: s.fps,
+          });
         }, 500);
       } catch (err) {
         setDegradation(`初始化失败: ${err instanceof Error ? err.message : String(err)}`);
@@ -396,6 +411,7 @@ export default function App() {
       disposed = true;
       unsub?.();
       if (infoInterval) clearInterval(infoInterval);
+      setRenderStats(null);
       window.removeEventListener('resize', onResize);
       canvas?.removeEventListener('pointerdown', onPointerDown);
       canvas?.removeEventListener('pointerup', onPointerUp);
@@ -408,10 +424,10 @@ export default function App() {
     };
   }, []);
 
-  const handleTimeChange = (value: string) => {
-    setTimeValue(value);
-    const [h, m] = value.split(':').map(Number);
-    engineRef.current?.setHour((h ?? 0) + (m ?? 0) / 60);
+  const handleAxisHourChange = (hour: number) => {
+    setTimeValue(formatHour(hour));
+    setTimeInfo(formatHour(hour));
+    engineRef.current?.setHour(hour);
   };
 
   const handleSpeedChange = (value: number) => {
@@ -453,6 +469,10 @@ export default function App() {
     return () => clearTimeout(t);
   }, [notice]);
 
+  // TimeAxis 需要的浮点小时：从 timeValue（"HH:MM"）派生
+  const [th, tm] = timeValue.split(':').map(Number);
+  const axisHour = (th ?? 0) + (tm ?? 0) / 60;
+
   return (
     <div className="app-root">
       <div ref={canvasContainerRef} className="canvas-container" />
@@ -465,6 +485,7 @@ export default function App() {
         <div className="info">时间: {timeInfo}</div>
         {degradation && <div className="warning">{degradation}</div>}
         {sunset && <div className="warning">日落时段 — 暖光模拟中</div>}
+        <HudStats stats={renderStats} />
       </div>
 
       <aside className={`sidebar sidebar-left${leftOpen ? '' : ' collapsed'}`}>
@@ -502,33 +523,16 @@ export default function App() {
         )}
       </aside>
 
-      <div className="controls">
-        <label>
-          时间:{' '}
-          <input
-            type="time"
-            value={timeValue}
-            min="16:00"
-            max="21:00"
-            step={300}
-            onChange={(e) => handleTimeChange(e.target.value)}
-          />
-        </label>
-        <label>
-          速度:{' '}
-          <input
-            type="range"
-            min={0}
-            max={3}
-            step={0.1}
-            value={speed}
-            onChange={(e) => handleSpeedChange(parseFloat(e.target.value))}
-          />
-        </label>
-        <label>
-          <input type="checkbox" checked={shadows} onChange={(e) => handleShadowsChange(e.target.checked)} /> 阴影
-        </label>
-      </div>
+      <TimeAxis
+        hour={axisHour}
+        onHourChange={handleAxisHourChange}
+        speed={speed}
+        onSpeedChange={handleSpeedChange}
+        shadows={shadows}
+        onShadowsChange={handleShadowsChange}
+      />
+
+      <BuildBadge backend={backendType} />
 
       {!ready && !degradation && <div className="loading">加载中...</div>}
     </div>

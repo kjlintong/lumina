@@ -15,6 +15,7 @@
 
 import type {
   Light,
+  Line,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
@@ -104,6 +105,19 @@ function clamp01(v: number): number {
 }
 
 /**
+ * 统计场景中可渲染对象数（只数 Mesh / Points / Line，不数 Group / Light / 相机）。
+ * 抽成纯函数：HUD 统计单测直接喂一个手工 Scene 即可，无需起引擎。
+ */
+export function countRenderableObjects(scene: Scene): number {
+  let count = 0;
+  scene.traverse((obj) => {
+    const o = obj as Mesh & Points & Line;
+    if (o.isMesh || o.isPoints || o.isLine) count++;
+  });
+  return count;
+}
+
+/**
  * 场景引擎：管理 Three.js 场景图、光源、太阳、曝光。
  */
 export class SceneEngine {
@@ -148,6 +162,9 @@ export class SceneEngine {
   private animationId: number | null = null;
   private lastTime = 0;
   private orbitControls: OrbitControls;
+
+  /** 帧率滑动平均（P8c HUD）。animate 内按 `0.9*fps + 0.1*(1/dt)` 更新。 */
+  private fps = 0;
 
   /** 复用的背景色实例（每帧 setRGB 就地更新，避免每帧 new Color 的 GC 压力） */
   private bgColor = new Color();
@@ -637,6 +654,11 @@ export class SceneEngine {
       const deltaTime = this.lastTime === 0 ? 0 : (time - this.lastTime) / 1000;
       this.lastTime = time;
 
+      // 帧率滑动平均（P8c HUD）：delta<=0（首帧/回表）不更新，避免除零污染。
+      if (deltaTime > 0) {
+        this.fps = 0.9 * this.fps + 0.1 * (1 / deltaTime);
+      }
+
       // 推进时间
       this.advanceTime(deltaTime);
 
@@ -693,6 +715,27 @@ export class SceneEngine {
   /** 获取相机 */
   getCamera(): PerspectiveCamera {
     return this.camera;
+  }
+
+  /**
+   * 渲染统计（P8c HUD）。数字全部真实：
+   * - triangles：WebGL2 取 `renderer.info.render.triangles`；WebGPU 无此 API，
+   *   返回 0（UI 显示 `—`，不虚报）。
+   * - objects：遍历 scene，只数 Mesh / Points / Line（见 countRenderableObjects）。
+   * - fps：animate 循环内维护的滑动平均；未渲染过时为 0。
+   */
+  getRenderStats(): { triangles: number; objects: number; fps: number } {
+    let triangles = 0;
+    if (this.backend.type === 'webgl2') {
+      const renderer = this.backend.getRenderer() as WebGLRenderer | undefined;
+      const t = renderer?.info?.render?.triangles;
+      if (typeof t === 'number' && Number.isFinite(t)) triangles = t;
+    }
+    return {
+      triangles,
+      objects: countRenderableObjects(this.scene),
+      fps: this.fps,
+    };
   }
 
   /** 获取太阳光源世界坐标 */

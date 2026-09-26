@@ -15,6 +15,10 @@ import { fileURLToPath } from 'node:url';
  */
 export default defineConfig({
   plugins: [react()],
+  define: {
+    // P8c BuildBadge：构建时间注入，运行时在右下角显示
+    'import.meta.env.VITE_BUILD_TIME': JSON.stringify(new Date().toISOString()),
+  },
   resolve: {
     alias: {
       '@core': fileURLToPath(new URL('./src/core', import.meta.url)),
