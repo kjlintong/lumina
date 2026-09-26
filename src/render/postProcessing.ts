@@ -1,34 +1,38 @@
 /**
  * 后处理管线（WebGL2 专属，P7）
  *
- * 封装 Three.js EffectComposer，构建标准 bloom 管线：
- *   RenderPass → UnrealBloomPass → OutputPass
+ * 封装 Three.js EffectComposer，构建标准管线：
+ *   RenderPass → GodraysPass（体积光）→ UnrealBloomPass（光晕）→ OutputPass（色调映射）
  *
- * 管线说明：
- * - EffectComposer 内部创建 HalfFloatType 渲染目标（HDR 管线），
- *   RenderPass 渲染场景到线性 HDR 缓冲（不应用色调映射）。
- * - UnrealBloomPass 在线性 HDR 空间提取高亮区域并模糊叠加，
- *   实现光晕效果。
- * - OutputPass 在末端应用 ACESFilmic 色调映射 + sRGB 色彩空间转换。
+ * GodraysPass 需要场景深度纹理：
+ *   render() 时先渲染场景到带 DepthTexture 的 RT，将深度纹理传递给 GodraysPass，
+ *   再由 EffectComposer 正常渲染管线（RenderPass 内部再渲染一次场景到 composer RT）。
+ *   多一次场景渲染是体积光的代价，但深度精度与正确性有保障。
  *
  * 自动曝光（P5）与后处理互不干扰：
- * getAverageLuminance 直接渲染场景到独立 16×16 RT（不经过 composer），
- * 采样线性 HDR 值（非色调映射后值），符合自动曝光算法预期。
+ *   getAverageLuminance 直接渲染场景到独立 16×16 RT（不经过 composer），
+ *   采样线性 HDR 值，符合自动曝光算法预期。
  *
  * 架构依据：
- * - docs/00-p0-version-verification.md §3（EffectComposer WebGL 专属）
- * - docs/P3-M1.6-spec.md 红线：业务层不得直接 import three/WebGLRenderer
- *
- * 注意：EffectComposer 硬编码 WebGLRenderTarget，不能与 WebGPURenderer 混用。
- * WebGPU 路径必须使用 TSL 自研 pass（见 GodraysNode 等）。
+ *   - docs/00-p0-version-verification.md §3（EffectComposer WebGL 专属）
+ *   - docs/P3-M1.6-spec.md 红线：业务层不得直接 import three/WebGLRenderer
  */
 
 import type { Camera, WebGLRenderer } from 'three';
-import { PerspectiveCamera, Scene, Vector2 } from 'three';
+import {
+  DepthTexture,
+  PerspectiveCamera,
+  Scene,
+  UnsignedShortType,
+  Vector2,
+  WebGLRenderTarget,
+} from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { DEFAULT_GODRAYS, GodraysPass } from './godrays.js';
+import type { GodraysSettings } from './godrays.js';
 
 /** Bloom 配置参数 */
 export interface BloomConfig {
@@ -50,30 +54,36 @@ export interface BloomSettings {
 /**
  * 后处理管线控制器。
  *
- * 内部维护 EffectComposer + 三个 Pass：
- *   RenderPass（场景渲染）→ UnrealBloomPass（光晕）→ OutputPass（色调映射）
- *
- * 每个渲染帧通过 render(scene, camera) 调用，
- * 场景和相机每帧更新（RenderPass 的属性为可变引用）。
+ * 内部维护 EffectComposer + GodraysPass + 三个 Pass：
+ *   RenderPass → GodraysPass → UnrealBloomPass → OutputPass
  */
 export class PostProcessing {
   private composer: EffectComposer;
   private renderPass: RenderPass;
   private bloomPass: UnrealBloomPass;
   private outputPass: OutputPass;
+  private godraysPass: GodraysPass;
+  private godraysRT: WebGLRenderTarget | null;
+  private _godraysSettings: GodraysSettings;
+  private _renderer: WebGLRenderer;
+  /** 最近一次 resize 的尺寸，供 enabled 切换时按需创建深度 RT */
+  private _size = { w: 0, h: 0 };
 
-  /**
-   * 创建后处理管线。
-   *
-   * @param renderer WebGLRenderer 实例（必须是 WebGL2 后端）
-   * @param config Bloom 配置（可选，使用默认值）
-   */
-  constructor(renderer: WebGLRenderer, config: BloomConfig = {}) {
+  constructor(
+    renderer: WebGLRenderer,
+    config: BloomConfig = {},
+    godraysConfig: Partial<GodraysSettings> = {},
+  ) {
+    this._renderer = renderer;
+    this._godraysSettings = { ...DEFAULT_GODRAYS, ...godraysConfig };
+
     this.composer = new EffectComposer(renderer);
 
-    // RenderPass 需要 scene/camera 参数（构造时传入占位符，
-    // 实际值在 render() 中每帧更新）
     this.renderPass = new RenderPass(new Scene(), new PerspectiveCamera());
+
+    this.godraysPass = new GodraysPass();
+    this.godraysPass.enabled = this._godraysSettings.enabled;
+    this.godraysPass.setSettings(this._godraysSettings);
 
     this.bloomPass = new UnrealBloomPass(
       new Vector2(),
@@ -84,40 +94,50 @@ export class PostProcessing {
 
     this.outputPass = new OutputPass();
 
+    // 管线顺序：RenderPass → Godrays → Bloom → Output
     this.composer.addPass(this.renderPass);
+    this.composer.addPass(this.godraysPass);
     this.composer.addPass(this.bloomPass);
     this.composer.addPass(this.outputPass);
+
+    this.godraysRT = null;
   }
 
   /**
-   * 渲染一帧（替代 backend.render 中的直接 renderer.render）。
+   * 渲染一帧。
    *
-   * @param scene 当前场景
-   * @param camera 当前相机
+   * GodraysPass 启用时：先渲染场景到带深度 RT → 传递深度纹理 → composer.render()。
+   * 禁用时：直接 composer.render()，零额外开销。
    */
   render(scene: Scene, camera: Camera): void {
     this.renderPass.scene = scene;
     this.renderPass.camera = camera;
+
+    if (this._godraysSettings.enabled && this.godraysRT) {
+      const prevRT = this._renderer.getRenderTarget();
+      this._renderer.setRenderTarget(this.godraysRT);
+      this._renderer.render(scene, camera);
+      this._renderer.setRenderTarget(prevRT);
+
+      if (this.godraysRT.depthTexture) {
+        this.godraysPass.setDepthTexture(this.godraysRT.depthTexture);
+      }
+    }
+
     this.composer.render();
   }
 
-  /**
-   * 更新管线分辨率（窗口 resize 时调用）。
-   *
-   * @param width 逻辑宽度（CSS 像素）
-   * @param height 逻辑高度（CSS 像素）
-   */
+  /** 更新管线分辨率 */
   resize(width: number, height: number): void {
+    this._size = { w: width, h: height };
     this.composer.setSize(width, height);
+
+    if (this._godraysSettings.enabled) {
+      this._recreateGodraysRT(width, height);
+    }
   }
 
-  /**
-   * 更新 Bloom 参数（运行时调节，不重建管线）。
-   *
-   * @param strength 光晕强度
-   * @param radius 光晕半径
-   * @param threshold 亮度阈值
-   */
+  /** 更新 Bloom 参数 */
   setBloom(strength: number, radius: number, threshold: number): void {
     this.bloomPass.strength = strength;
     this.bloomPass.radius = radius;
@@ -133,8 +153,54 @@ export class PostProcessing {
     };
   }
 
-  /** 释放 GPU 资源（后处理管线不再使用时调用） */
+  /** 设置 Godrays 光源屏幕位置 (UV 0–1) */
+  setGodraysLightPosition(x: number, y: number): void {
+    this.godraysPass.setLightScreenPosition(x, y);
+  }
+
+  /** 获取当前 Godrays 光源屏幕位置 */
+  getGodraysLightPosition(): { x: number; y: number } | null {
+    const v = this.godraysPass.lightPosition;
+    return { x: v.x, y: v.y };
+  }
+
+  /** 更新 Godrays 参数 */
+  setGodrays(partial: Partial<GodraysSettings>): void {
+    this._godraysSettings = { ...this._godraysSettings, ...partial };
+    this.godraysPass.setSettings(this._godraysSettings);
+
+    if (partial.enabled !== undefined) {
+      if (partial.enabled && this._size.w > 0) {
+        // 重新启用：用当前尺寸创建深度 RT（resize 可能尚未到来）
+        this._recreateGodraysRT(this._size.w, this._size.h);
+      } else if (!partial.enabled) {
+        this.godraysRT?.dispose();
+        this.godraysRT = null;
+        this.godraysPass.setDepthTexture(null);
+      }
+    }
+  }
+
+  /** 获取 Godrays 参数快照 */
+  getGodrays(): GodraysSettings {
+    return { ...this._godraysSettings };
+  }
+
+  /** 创建（或重建）Godrays 深度 RT */
+  private _recreateGodraysRT(width: number, height: number): void {
+    this.godraysRT?.dispose();
+    this.godraysRT = new WebGLRenderTarget(width, height, {
+      type: UnsignedShortType,
+      depthBuffer: true,
+      stencilBuffer: false,
+      depthTexture: new DepthTexture(width, height, UnsignedShortType),
+    });
+  }
+
+  /** 释放 GPU 资源 */
   dispose(): void {
+    this.godraysRT?.dispose();
+    this.godraysRT = null;
     this.composer.dispose();
   }
 }

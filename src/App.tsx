@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Raycaster, Vector2 } from 'three';
+import { Raycaster, Vector2, Vector3 } from 'three';
 import type { Object3D } from 'three';
 import type { ActivityZone, Fixture } from './core/types.js';
 import { createBackend } from './render/backend.js';
 import type { BackendType, RenderBackend } from './render/backend.js';
 import type { BloomSettings } from './render/postProcessing.js';
+import type { GodraysSettings } from './render/godrays.js';
+import { DEFAULT_GODRAYS } from './render/godrays.js';
 import { preloadIESFiles } from './render/iesCache.js';
 import { serializeProject, deserializeProject } from './core/serialize.js';
 import { SceneEngine } from './scene/sceneEngine.js';
@@ -210,6 +212,8 @@ export default function App() {
 
   // Bloom 光晕参数（WebGL2 后处理，WebGPU 无此功能）
   const [bloom, setBloom] = useState<BloomSettings | null>(null);
+  // Godrays 体积光参数（WebGL2 后处理）
+  const [godrays, setGodrays] = useState<GodraysSettings | null>(null);
   const backendRef = useRef<RenderBackend | null>(null);
 
   const [leftOpen, setLeftOpen] = useState(true);
@@ -304,8 +308,9 @@ export default function App() {
         const controller = new SceneController(engine);
         controllerRef.current = controller;
 
-        // 初始化 Bloom 状态（WebGL2 后处理，WebGPU 无此功能）
+        // 初始化 Bloom + Godrays 状态（WebGL2 后处理，WebGPU 无此功能）
         setBloom(result.backend.getBloom?.() ?? null);
+        setGodrays(result.backend.getGodrays?.() ?? null);
 
         // 初始灯具与活动区进引擎（订阅只处理之后的变更）
         const st = useProjectStore.getState();
@@ -335,8 +340,27 @@ export default function App() {
           }
         });
 
-        // 场景过渡动画挂进渲染循环（tick 内部用 Date.now()）
-        engine.setFrameCallback(() => controller.tick());
+        // 场景过渡动画 + Godrays 光源跟随太阳（挂进渲染循环）
+        const _tmpVec = new Vector3();
+        engine.setFrameCallback(() => {
+          controller.tick();
+          // 将太阳世界坐标投影到屏幕 UV，驱动体积光光源位置
+          const eng = engineRef.current;
+          const bkd = backendRef.current;
+          if (eng && bkd?.setGodraysLightPosition) {
+            const sun = eng.getSunPosition();
+            if (eng.getSunIntensity() > 0) {
+              _tmpVec.set(sun.x, sun.y, sun.z).project(eng.getCamera());
+              // NDC → UV (0-1)
+              const uvX = (_tmpVec.x + 1) / 2;
+              const uvY = (_tmpVec.y + 1) / 2;
+              // 仅当太阳在可视范围内时更新（z < 1 表示在近平面之前）
+              if (_tmpVec.z < 1) {
+                bkd.setGodraysLightPosition(uvX, uvY);
+              }
+            }
+          }
+        });
 
         engine.resize(container.clientWidth, container.clientHeight);
         // 相机初始位由 SceneEngine 构造器给出（房间内东南角望中心，P4b 修复：
@@ -400,6 +424,12 @@ export default function App() {
     setBloom({ strength, radius, threshold });
   };
 
+  const handleGodraysChange = (partial: Partial<GodraysSettings>) => {
+    backendRef.current?.setGodrays?.(partial);
+    const current = godrays ?? { ...DEFAULT_GODRAYS };
+    setGodrays({ ...current, ...partial });
+  };
+
   // 解绑提示：store.notice 变化时显示 toast，4 秒后自动消失
   const notice = useProjectStore((s) => s.notice);
   useEffect(() => {
@@ -446,6 +476,8 @@ export default function App() {
               postProcessing={backendType === 'webgl2'}
               bloom={bloom}
               onBloomChange={handleBloomChange}
+              godrays={godrays}
+              onGodraysChange={handleGodraysChange}
             />
           </div>
         )}

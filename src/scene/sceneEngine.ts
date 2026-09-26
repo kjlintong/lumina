@@ -495,6 +495,20 @@ export class SceneEngine {
     return this.camera;
   }
 
+  /** 获取太阳光源世界坐标 */
+  getSunPosition(): { x: number; y: number; z: number } {
+    return {
+      x: this.sunLight.position.x,
+      y: this.sunLight.position.y,
+      z: this.sunLight.position.z,
+    };
+  }
+
+  /** 获取太阳强度（0 = 地平线以下） */
+  getSunIntensity(): number {
+    return this.sunLight.intensity;
+  }
+
   /** 设置相机位置（朝向房间中心工作面高度；同步轨道控制器目标点保持一致） */
   setCameraPosition(x: number, y: number, z: number): void {
     this.camera.position.set(x, y, z);

@@ -14,6 +14,7 @@ import type { WebGLRenderer } from 'three';
 import { averageLuminanceFromRGBA } from './luminance.js';
 import { PostProcessing } from './postProcessing.js';
 import type { BloomSettings } from './postProcessing.js';
+import type { GodraysSettings } from './godrays.js';
 
 /** 后端类型标识 */
 export type BackendType = 'webgpu' | 'webgl2';
@@ -118,6 +119,27 @@ export interface RenderBackend {
    * WebGPU 后端返回 undefined。
    */
   getBloom?(): BloomSettings | undefined;
+
+  /**
+   * 设置 Godrays 体积光参数（仅 WebGL2 支持）。
+   * WebGPU 后端忽略此调用。
+   */
+  setGodrays?(partial: Partial<GodraysSettings>): void;
+
+  /**
+   * 获取当前 Godrays 参数（仅 WebGL2）。
+   * WebGPU 后端返回 undefined。
+   */
+  getGodrays?(): GodraysSettings | undefined;
+
+  /**
+   * 设置 Godrays 光源屏幕位置（UV 0–1）。
+   * 仅 WebGL2 支持。WebGPU 后端忽略。
+   */
+  setGodraysLightPosition?(x: number, y: number): void;
+
+  /** 获取当前 Godrays 光源屏幕位置 */
+  getGodraysLightPosition?(): { x: number; y: number } | undefined;
 
   /** 释放后端资源 */
   dispose(): void;
@@ -266,7 +288,7 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
 
   const capabilities: BackendCapabilities = {
     supportsIES: false,
-    supportsGodrays: false,
+    supportsGodrays: enablePost,
     supportsEffectComposer: enablePost,
     toneMapping: 'ACESFilmic',
     supportsShadows: true,
@@ -340,6 +362,14 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
       postProcessing?.setBloom(strength, radius, threshold);
     },
     getBloom: () => postProcessing?.getBloom(),
+    setGodrays: (partial) => {
+      postProcessing?.setGodrays(partial);
+    },
+    getGodrays: () => postProcessing?.getGodrays(),
+    setGodraysLightPosition: (x, y) => {
+      postProcessing?.setGodraysLightPosition(x, y);
+    },
+    getGodraysLightPosition: () => postProcessing?.getGodraysLightPosition() ?? undefined,
     dispose: () => {
       sampleRT.dispose();
       postProcessing?.dispose();

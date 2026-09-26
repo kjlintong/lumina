@@ -9,6 +9,7 @@
 import { useRef, useState } from 'react';
 import { useProjectStore } from '../../store/projectStore.js';
 import { serializeProject, deserializeProject } from '../../core/serialize.js';
+import type { GodraysSettings } from '../../render/godrays.js';
 import { Panel } from './Panel.js';
 
 interface RenderPanelProps {
@@ -18,9 +19,19 @@ interface RenderPanelProps {
   bloom: { strength: number; radius: number; threshold: number } | null;
   /** 设置 Bloom 参数 */
   onBloomChange: (strength: number, radius: number, threshold: number) => void;
+  /** 当前 Godrays 参数 */
+  godrays: GodraysSettings | null;
+  /** 更新 Godrays 参数 */
+  onGodraysChange: (partial: Partial<GodraysSettings>) => void;
 }
 
-export function RenderPanel({ postProcessing, bloom, onBloomChange }: RenderPanelProps) {
+export function RenderPanel({
+  postProcessing,
+  bloom,
+  onBloomChange,
+  godrays,
+  onGodraysChange,
+}: RenderPanelProps) {
   const [bloomOn, setBloomOn] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -127,6 +138,96 @@ export function RenderPanel({ postProcessing, bloom, onBloomChange }: RenderPane
               onChange={(e) => {
                 const v = parseFloat(e.target.value);
                 if (Number.isFinite(v)) onBloomChange(bloom.strength, bloom.radius, v);
+              }}
+            />
+          </label>
+        </div>
+      )}
+
+      {/* 体积光 Godrays（仅 WebGL2） */}
+      {postProcessing && godrays && (
+        <div className="field-group">
+          <div className="field-group-title">体积光 (Godrays)</div>
+          <label className="field">
+            <span className="field-label">启用</span>
+            <input
+              type="checkbox"
+              checked={godrays.enabled}
+              onChange={(e) => onGodraysChange({ enabled: e.target.checked })}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">密度 {godrays.density.toFixed(2)}</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={godrays.density}
+              disabled={!godrays.enabled}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (Number.isFinite(v)) onGodraysChange({ density: v });
+              }}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">衰减 {godrays.decay.toFixed(2)}</span>
+            <input
+              type="range"
+              min={0}
+              max={10}
+              step={0.1}
+              value={godrays.decay}
+              disabled={!godrays.enabled}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (Number.isFinite(v)) onGodraysChange({ decay: v });
+              }}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">强度 {godrays.weight.toFixed(2)}</span>
+            <input
+              type="range"
+              min={0}
+              max={5}
+              step={0.1}
+              value={godrays.weight}
+              disabled={!godrays.enabled}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (Number.isFinite(v)) onGodraysChange({ weight: v });
+              }}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">光晕半径 {godrays.screenRadius.toFixed(2)}</span>
+            <input
+              type="range"
+              min={0.1}
+              max={2}
+              step={0.1}
+              value={godrays.screenRadius}
+              disabled={!godrays.enabled}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (Number.isFinite(v)) onGodraysChange({ screenRadius: v });
+              }}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">采样数 {godrays.sampleCount}</span>
+            <input
+              type="range"
+              min={4}
+              max={64}
+              step={1}
+              value={godrays.sampleCount}
+              disabled={!godrays.enabled}
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10);
+                if (!Number.isNaN(v)) onGodraysChange({ sampleCount: v });
               }}
             />
           </label>
