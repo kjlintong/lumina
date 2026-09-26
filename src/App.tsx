@@ -204,10 +204,11 @@ export default function App() {
   const [degradation, setDegradation] = useState<string | null>(null);
 
   // 时间 / 速度 / 阴影控制（React 组件状态，调用 engine 对应方法）
-  const [timeValue, setTimeValue] = useState('18:00');
-  const [timeInfo, setTimeInfo] = useState('18:00');
+  // P8a：时间默认冻结（speed=0），初始停在 17:45 日落前的产品主场景时刻。
+  const [timeValue, setTimeValue] = useState('17:45');
+  const [timeInfo, setTimeInfo] = useState('17:45');
   const [sunset, setSunset] = useState(false);
-  const [speed, setSpeed] = useState(0.5);
+  const [speed, setSpeed] = useState(0);
   const [shadows, setShadows] = useState(true);
 
   // Bloom 光晕参数（WebGL2 后处理，WebGPU 无此功能）
@@ -300,8 +301,9 @@ export default function App() {
           roomWidth: 6,
           roomDepth: 4.5,
           roomHeight: 2.8,
-          initialHour: 18.0,
-          timeSpeed: 0.5,
+          // P8a：初始 17:45（日落前），时间冻结（timeSpeed=0），用户拖速度滑杆才流逝
+          initialHour: 17.75,
+          timeSpeed: 0,
         });
         engineRef.current = engine;
         backendRef.current = result.backend;
@@ -485,7 +487,15 @@ export default function App() {
 
       <div className="controls">
         <label>
-          时间: <input type="time" value={timeValue} step={600} onChange={(e) => handleTimeChange(e.target.value)} />
+          时间:{' '}
+          <input
+            type="time"
+            value={timeValue}
+            min="16:00"
+            max="21:00"
+            step={300}
+            onChange={(e) => handleTimeChange(e.target.value)}
+          />
         </label>
         <label>
           速度:{' '}

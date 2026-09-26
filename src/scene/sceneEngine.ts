@@ -13,7 +13,14 @@
  * 架构依据：工程方案 §5.4（自动曝光）、§5.2（配光双轨）
  */
 
-import type { Light, Object3D } from 'three';
+import type {
+  Light,
+  Mesh,
+  MeshBasicMaterial,
+  Object3D,
+  WebGLRenderTarget,
+  WebGLRenderer,
+} from 'three';
 import {
   AmbientLight,
   Color,
@@ -21,15 +28,20 @@ import {
   Group,
   HemisphereLight,
   PerspectiveCamera,
+  PMREMGenerator,
   Scene,
+  SRGBColorSpace,
+  Vector3,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { ActivityZone, Fixture } from '../core/types.js';
 import type { RenderBackend } from '../render/backend.js';
 import { buildActivityZone } from '../render/activityZone.js';
 import { buildFurniture } from '../render/furniture.js';
 import { buildLightFromFixture, cctToRGB } from '../render/lightBuilder.js';
 import { buildRoom } from '../render/room.js';
+import { buildSkyScene, setSkyBackdropColors, skyColors } from '../render/sky.js';
 import { AutoExposure } from '../render/autoExposure.js';
 import { solarColor, solarPosition } from './solar.js';
 
@@ -47,13 +59,22 @@ export interface SceneEngineConfig {
   dayOfYear?: number;
   /** 是否启用自动曝光 */
   autoExposure?: boolean;
-  /** 时间推进速度（小时/秒） */
+  /**
+   * 时间推进速度（小时/秒）。**默认 0（时间冻结）** —— P8a 根因 A：
+   * 旧默认 0.5 h/s 让页面挂几分钟就跑到后半夜、画面变黑。
+   * 现在默认停在初始时刻，仅当用户拖动速度滑杆时才流逝。
+   */
   timeSpeed?: number;
 }
 
 /** 日落时间配置（17:00 → 20:00） */
 const SUNSET_START = 17.0;
 const SUNSET_END = 20.0;
+
+/** 太阳平行光距离（米）。限制在窗外 12–20m 区间（取景调整，见 updateSunPosition） */
+const SUN_DIST = 15;
+/** 窗外太阳圆盘的视觉距离（米），比平行光更远以免遮挡窗框 */
+const SKY_SUN_DIST = 24;
 
 /** 单盏灯在场景图中的登记项 */
 interface FixtureLightEntry {
@@ -118,6 +139,24 @@ export class SceneEngine {
   private lastTime = 0;
   private orbitControls: OrbitControls;
 
+  /** 复用的背景色实例（每帧 setRGB 就地更新，避免每帧 new Color 的 GC 压力） */
+  private bgColor = new Color();
+
+  /** PMREM 环境贴图生成器与产物（仅 WebGL2；dispose 时清理） */
+  private pmrem: PMREMGenerator | null = null;
+  private envRenderTarget: WebGLRenderTarget | null = null;
+
+  /** 窗外太阳圆盘（视觉锚点）与其材质；构造时由 buildSkyScene 给出 */
+  private skySun: Mesh | null = null;
+  private skySunMat: MeshBasicMaterial | null = null;
+  /** 天空背板；构造时由 buildSkyScene 给出 */
+  private skyBackdrop: Mesh | null = null;
+  /** 窗中心世界坐标（sky-scene 组原点） */
+  private skyOrigin = new Vector3();
+
+  /** 复用临时向量（每帧太阳圆盘定位，避免每帧 new Vector3） */
+  private _skyTmp = new Vector3();
+
   /**
    * 每帧回调（渲染循环内、render 之前调用）。App 用它把 sceneController.tick
    * 挂进引擎循环，驱动场景过渡动画，避免再起一个 rAF。
@@ -129,10 +168,13 @@ export class SceneEngine {
     this.timeHour = config.initialHour ?? 18.0;
     this.latitude = config.latitude ?? (39.9 * Math.PI) / 180; // 北京
     this.dayOfYear = config.dayOfYear ?? 180; // 夏至
-    this.timeSpeed = config.timeSpeed ?? 0.5;
+    // P8a 根因 A：默认 0（时间冻结）。旧的 0.5 h/s 让画面在页面挂几分钟后
+    // 自动跑进深夜变黑。现在停在初始时刻，仅当用户拖速度滑杆才流逝。
+    this.timeSpeed = config.timeSpeed ?? 0;
 
     this.scene = new Scene();
-    this.scene.background = new Color(0x0a0a1a);
+    // 背景色复用同一 Color 实例（bgColor），由 updateSunPosition 按天空渐变就地更新。
+    this.scene.background = this.bgColor;
 
     // 相机初始在房间**内部**：这是室内灯光设计工具，用户以室内视角看灯效。
     // 房间默认 6×4.5×2.8（中心在原点，x∈±3，z∈±2.25），相机放东南角附近
@@ -188,16 +230,55 @@ export class SceneEngine {
       this.autoExposure = null;
     }
 
-    // 构建房间
-    const { group } = buildRoom(
-      config.roomWidth ?? 6,
-      config.roomDepth ?? 4.5,
-      config.roomHeight ?? 2.8,
-    );
+    // 构建房间（P8a：北墙改落地窗，让夕阳从窗外打入在地板留光斑）
+    const roomWidth = config.roomWidth ?? 6;
+    const roomDepth = config.roomDepth ?? 4.5;
+    const roomHeight = config.roomHeight ?? 2.8;
+    const { group, windows } = buildRoom(roomWidth, roomDepth, roomHeight, { withWindow: true });
     this.scene.add(group);
+
+    // 室外远景（太阳圆盘 + 远山/城市剪影）放在落地窗外。
+    // 窗中心直接取玻璃 mesh 的位置（房间组在原点，局部坐标即世界坐标），
+    // 外法线朝北 (0,0,-1)。sky-scene 不参与阴影、不受光照，始终可见。
+    const glass = windows[0];
+    if (glass) this.skyOrigin.copy(glass.position);
+    const sky = buildSkyScene(this.skyOrigin, new Vector3(0, 0, -1));
+    this.skySun = sky.sun;
+    this.skySunMat = sky.sun.material as MeshBasicMaterial;
+    this.skyBackdrop = sky.backdrop;
+    this.scene.add(sky.group);
+
+    // 环境反射（P8a 根因 C）：RoomEnvironment PMREM 让 PBR 材质「活起来」。
+    // 仅 WebGL2 路径生成；WebGPU / 测试 mock 安全跳过（见 initEnvironment）。
+    this.initEnvironment();
 
     // 初始更新太阳
     this.updateSunPosition();
+  }
+
+  /**
+   * 生成 RoomEnvironment PMREM 环境贴图并赋给 scene.environment。
+   *
+   * PMREMGenerator 依赖 WebGL 内部 API（CubeUV render target / shader），
+   * 仅 WebGL2 后端可用；WebGPU 后端跳过（保留 ambient/hemi 兜底）。
+   * 红线：业务层不直接 new WebGLRenderer，经 backend.getRenderer() 转型。
+   * 测试 mock 的 getRenderer 返回 undefined，同样安全跳过。
+   */
+  private initEnvironment(): void {
+    if (this.backend.type !== 'webgl2') return;
+    const renderer = this.backend.getRenderer() as WebGLRenderer;
+    if (!renderer || typeof renderer.getRenderTarget !== 'function') return;
+    try {
+      const pmrem = new PMREMGenerator(renderer);
+      this.pmrem = pmrem;
+      const rt = pmrem.fromScene(new RoomEnvironment(), 0);
+      this.envRenderTarget = rt;
+      // 只赋 environment（提供环境反射），**不**赋 background ——
+      // 背景仍由 skyColors 渐变负责，否则会变成灰白房间外壳。
+      this.scene.environment = rt.texture;
+    } catch {
+      // headless / 无 WebGL 上下文等极端环境：跳过环境贴图，不致命
+    }
   }
 
   /** 添加灯具到场景；已存在时等价 updateFixture（重建） */
@@ -354,44 +435,82 @@ export class SceneEngine {
     const pos = solarPosition(this.timeHour, this.latitude, declination);
     const { elevation, azimuth, belowHorizon } = pos;
 
-    // 太阳位置
-    const dist = 20;
-    this.sunLight.position.set(
-      Math.cos(elevation) * Math.sin(azimuth) * dist,
-      Math.sin(elevation) * dist,
-      Math.cos(elevation) * Math.cos(azimuth) * dist,
-    );
+    // ---- 太阳平行光位置（P8a 取景调整）----
+    // solarPosition() 天文公式不变；这里只调整最终取景位置：
+    // 落地窗在北墙（z = -depth/2）。为让夕阳从窗外打入、在地板留下光斑与
+    // 窗框阴影，把太阳翻到北侧（z<0）并保证足够的北向分量穿透窗洞
+    // （≥0.45，否则光只掠过墙面、进不了房间），距离限制在窗外 SUN_DIST(15m)。
+    const px = Math.cos(elevation) * Math.sin(azimuth);
+    const py = Math.sin(elevation);
+    const pz = -Math.max(Math.abs(Math.cos(elevation) * Math.cos(azimuth)), 0.45);
+    const len = Math.hypot(px, py, pz) || 1;
+    const sunX = (px / len) * SUN_DIST;
+    const sunY = (py / len) * SUN_DIST;
+    const sunZ = (pz / len) * SUN_DIST;
+    this.sunLight.position.set(sunX, sunY, sunZ);
 
+    const sinEl = Math.sin(elevation);
     if (belowHorizon) {
       this.sunLight.intensity = 0;
       this.sunLight.color.setRGB(0, 0, 0);
     } else {
-      // 根据太阳高度计算强度
-      const intensity = Math.sin(elevation) * 3.0;
-      this.sunLight.intensity = intensity;
-
-      // 根据太阳高度计算颜色
+      // 日落前后（elevation∈(0,π/12)）用 pow(...,0.7) 让暖光贴近地平线仍有
+      // 可见强度，避免线性 sin 在该区间断崖归零。
+      this.sunLight.intensity = Math.pow(Math.max(0, sinEl), 0.7) * 3.0;
       const { r, g, b } = solarColor(elevation);
       this.sunLight.color.setRGB(r, g, b);
     }
 
-    // 环境光随太阳调整
-    const dayFactor = Math.max(0, Math.sin(elevation));
-    this.ambientLight.intensity = 0.1 + dayFactor * 0.4;
-    this.hemiLight.intensity = 0.05 + dayFactor * 0.3;
+    // ---- 环境光 / 半球光强度：白天拉高、夜晚压低但不归零 ----
+    // （归零会被 ACES 压成纯黑；保留 ~0.04–0.05 让夜间仅靠灯具也有可读画面）
+    const dayFactor = Math.max(0, sinEl);
+    this.ambientLight.intensity = 0.04 + dayFactor * 0.55;
+    this.hemiLight.intensity = 0.05 + dayFactor * 0.35;
 
-    // 背景色随太阳调整
-    if (belowHorizon) {
-      this.scene.background = new Color(0x0a0a1a);
-    } else if (elevation < Math.PI / 12) {
-      // 日出日落：深橙色
-      this.scene.background = new Color(0x1a0a05);
-    } else if (elevation < Math.PI / 4) {
-      // 傍晚：暖色
-      this.scene.background = new Color(0x1a1520);
-    } else {
-      // 白天：浅蓝
-      this.scene.background = new Color(0x87ceeb);
+    // ---- 背景 + 半球光颜色：随太阳高度角平滑渐变（P8a 根因 B/C）----
+    // 复用 bgColor 实例、就地 setRGB，不每帧 new Color。SRGBColorSpace 让
+    // skyColors 的 sRGB 关键帧正确转入线性工作空间。
+    const c = skyColors(elevation);
+    this.bgColor.setRGB(c.background.r, c.background.g, c.background.b, SRGBColorSpace);
+    this.scene.background = this.bgColor;
+    this.hemiLight.color.setRGB(c.ambientSky.r, c.ambientSky.g, c.ambientSky.b, SRGBColorSpace);
+    this.hemiLight.groundColor.setRGB(
+      c.ambientGround.r,
+      c.ambientGround.g,
+      c.ambientGround.b,
+      SRGBColorSpace,
+    );
+
+    // ---- 窗外太阳圆盘：沿取景后的太阳方向放到窗外远处，作 bloom / 体积光的视觉锚点 ----
+    if (this.skySun && this.skySunMat) {
+      this.skySun.visible = !belowHorizon;
+      const sd = this._skyTmp.set(sunX, sunY, sunZ).normalize().multiplyScalar(SKY_SUN_DIST);
+      // sky-scene 组无旋转（仅平移到 skyOrigin），局部坐标 = 世界方向 - 组原点
+      this.skySun.position.set(
+        sd.x - this.skyOrigin.x,
+        sd.y - this.skyOrigin.y,
+        sd.z - this.skyOrigin.z,
+      );
+      if (belowHorizon) {
+        this.skySunMat.color.setRGB(0, 0, 0);
+      } else {
+        const { r, g, b } = solarColor(elevation);
+        // 注意：transmission 玻璃会采样本太阳圆盘，color > 1.0 会被 bloom 处理
+        // 但同时让玻璃采样到 HDR 过曝值 → 窗全白。这里钳到 1.0，过曝感交给 bloom。
+        this.skySunMat.color.setRGB(
+          Math.min(r, 1),
+          Math.min(g, 1),
+          Math.min(b, 1),
+        );
+      }
+    }
+
+    // ---- 天空背板顶点色：按太阳高度更新渐变（天顶冷 → 地平线暖）----
+    // c 来自 skyColors，是 0..1 sRGB。顶点色 attribute 存 sRGB 值即可：
+    // MeshBasicMaterial 的 output-color-space 转换会把它和 material.color 同等对待，
+    // 与 PlaneGeometry 默认的 sRGB hex 颜色行为一致（Three.js 不做顶点色 sRGB→linear）。
+    if (this.skyBackdrop) {
+      setSkyBackdropColors(this.skyBackdrop, c.top, c.horizon);
     }
   }
 
@@ -526,6 +645,12 @@ export class SceneEngine {
   dispose(): void {
     this.stop();
     this.orbitControls.dispose();
+    // 清理 PMREM 环境贴图产物（仅 WebGL2 路径生成；未生成时为 null，安全跳过）
+    this.scene.environment = null;
+    this.envRenderTarget?.dispose();
+    this.envRenderTarget = null;
+    this.pmrem?.dispose();
+    this.pmrem = null;
     this.backend.dispose();
   }
 }
