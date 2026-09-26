@@ -1,12 +1,17 @@
 /**
- * 时间轴（P8c）：16:00 → 21:00 的横向渐变轨道 + 发光圆球手柄。
+ * 时间轴（P8c）：全天 0:00 → 24:00 的横向渐变轨道 + 发光圆球手柄。
  *
  * 替换原 `<input type="time">` 主轨道（视觉不可定制）。轨道本体是 `<div>`
- * （背景线性渐变模拟日落→夜晚），手柄是绝对定位的圆形 `<div>`。
+ *（背景线性渐变模拟一昼夜：午夜蓝 → 黎明橙 → 正午金 → 黄昏橙 → 深夜蓝），
+ * 手柄是绝对定位的圆形 `<div>`。
  * 可访问性：手柄用 `role="slider"` + 方向键调节，不依赖原生 range。
  *
- * 颜色/格式化数学都在纯函数里（`hourToRatio` / `formatHour`），
+ * 颜色/格式化数学都在纯函数里（`hourToRatio` / `trackGradient`），
  * 组件本身只做 DOM 交互，jsdom 下可测。
+ *
+ * 注：区间已扩到全天（用户要求 24h）。引擎 `setHour` 本来就钳 0..24 且
+ * `solarPosition` 按天文高度角处理夜晚（太阳在地平线下时 sunLight 归零、
+ * 环境光压到 ~0.04 保底），所以扩展时间轴不需要改渲染侧。
  */
 
 import { useCallback, useRef } from 'react';
@@ -14,7 +19,7 @@ import type { KeyboardEvent, PointerEvent } from 'react';
 import { formatHour } from '../../App.js';
 
 export interface TimeAxisProps {
-  /** 当前时间（小时，0..24 浮点；本组件只渲染 16..21 区间） */
+  /** 当前时间（小时，0..24 浮点） */
   hour: number;
   onHourChange: (h: number) => void;
   speed: number;
@@ -23,26 +28,31 @@ export interface TimeAxisProps {
   onShadowsChange: (v: boolean) => void;
 }
 
-/** 时间轴区间（产品主场景：日落到夜晚） */
-export const AXIS_MIN = 16;
-export const AXIS_MAX = 21;
+/** 时间轴区间：全天 0 → 24 */
+export const AXIS_MIN = 0;
+export const AXIS_MAX = 24;
 /** 键盘方向键步长（小时）。1/12 = 5 分钟 */
 const KEY_STEP = 1 / 12;
 
-/** 6 个整点刻度（16/17/18/19/20/21） */
-const TICKS = [16, 17, 18, 19, 20, 21];
+/** 13 个刻度（每 2 小时一个：0,2,4,...,24）。24h 轨道太窄，逐小时会挤成一团。 */
+const TICKS: number[] = Array.from({ length: 13 }, (_, i) => i * 2);
 
 /**
- * 轨道背景渐变：颜色键按虚拟时间从 16:00 暖黄 → 21:00 深夜蓝紫。
+ * 轨道背景渐变：颜色键按虚拟时间走一整个昼夜。
+ *
+ * 0/24 = 午夜深蓝 → 5 = 黎明前微亮 → 6 = 日出橙 → 12 = 正午金
+ * → 18 = 黄昏深红橙 → 21 = 入夜蓝紫 → 24 = 午夜深蓝（回环闭合）。
  * 纯函数便于单测断言颜色键齐全。
  */
 export function trackGradient(): string {
   return `linear-gradient(90deg,
-    #ffcc66 0%,
-    #ff8a3a 30%,
-    #c44a2a 55%,
-    #5a4a8a 80%,
-    #2a2a5a 100%)`;
+    #1a1a3e 0%,
+    #2a2a5e 18%,
+    #ff9040 25%,
+    #ffd24a 50%,
+    #c44a2a 75%,
+    #5a4a8a 88%,
+    #1a1a3e 100%)`;
 }
 
 /** hour → 轨道上的 0..1 比例（越界钳到端点） */
