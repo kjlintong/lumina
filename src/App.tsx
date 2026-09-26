@@ -490,7 +490,9 @@ export default function App() {
         <div className="title">Lumina — 灯光设计系统</div>
         <div className="info">渲染后端: {backendType.toUpperCase()}</div>
         <div className="info">时间: {timeInfo}</div>
-        {degradation && <div className="warning">{degradation}</div>}
+        {/* P9b：WebGPU 降级到 WebGL2 是常态（多数浏览器不支持），从红色警告
+            改成灰色 info 样式，不喧宾夺主。 */}
+        {degradation && <div className="info">{degradation}</div>}
         {sunset && <div className="warning">日落时段 — 暖光模拟中</div>}
         <HudStats stats={renderStats} />
       </div>

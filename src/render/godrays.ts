@@ -34,12 +34,19 @@ export interface GodraysSettings {
   sampleCount: number;
   /** 是否启用 */
   enabled: boolean;
+  /**
+   * P9b：整体亮度放大倍数。godrays 输出通常 0.05–0.2，远低于 bloom threshold
+   * 0.85；乘以 uBoost 后能被 bloom 抓到，光柱才有可见辉光。默认 3.0。
+   */
+  boost: number;
 }
 
 export const DEFAULT_GODRAYS: GodraysSettings = {
-  density: 0.2,
+  // P9b：0.2 → 0.5。让 godrays 散射量级从「几乎看不见」提到「肉眼可辨」。
+  density: 0.5,
   decay: 2.0,
-  weight: 1.0,
+  // P9b：1.0 → 2.0。配合 density 让总散射量级翻倍。
+  weight: 2.0,
   screenRadius: 1.0,
   // P9 交付物 3 兜底：24 → 16。godraysRT 已降到半分辨率，sampleCount 再降一档
   // 进一步压低每帧 ray-marching 成本（配合 5-8 FPS → 30+ 的目标）。
@@ -47,6 +54,8 @@ export const DEFAULT_GODRAYS: GodraysSettings = {
   // 两处各写一份会静默漂移（uniform 初始值与本常量不一致）。
   sampleCount: 16,
   enabled: true,
+  // P9b：新字段。见 GodraysSettings.boost 注释。
+  boost: 3.0,
 };
 
 /** Godrays volumetric light shader */
@@ -55,11 +64,13 @@ export const godraysShader = {
     tDiffuse: { value: null },
     tDepth: { value: null },
     lightPos: { value: new THREE.Vector4(0, 0, 0, 1) },
-    density: { value: 0.2 },
+    density: { value: 0.5 },
     decay: { value: 2.0 },
-    weight: { value: 1.0 },
+    weight: { value: 2.0 },
     screenRadius: { value: 1.0 },
     sampleCount: { value: 16 },
+    // P9b：整体亮度放大倍数。见 DEFAULT_GODRAYS.boost 注释。
+    boost: { value: 3.0 },
   },
 
   vertexShader: `
@@ -79,6 +90,8 @@ export const godraysShader = {
     uniform float weight;
     uniform float screenRadius;
     uniform float sampleCount;
+    // P9b：整体亮度放大倍数，让 godrays 输出能被 bloom 抓到。
+    uniform float boost;
     varying vec2 vUv;
 
     void main() {
@@ -142,8 +155,9 @@ export const godraysShader = {
         totalLight += scatter * falloff * radiusFalloff;
       }
 
-      // Add volumetric light to scene color
-      float volumetric = clamp(totalLight, 0.0, 1.0);
+      // P9b：加 uBoost 放大。godrays 输出通常 0.05–0.2，远低于 bloom threshold
+      // 0.85；乘以 3.0 后能进 bloom，光柱才有可见辉光。clamp 到 0–1 防溢出。
+      float volumetric = clamp(totalLight * boost, 0.0, 1.0);
       gl_FragColor = vec4(color.rgb + volumetric * 0.5, color.a);
     }
   `,
@@ -201,5 +215,7 @@ export class GodraysPass extends ShaderPass {
     if (u.screenRadius) (u.screenRadius as { value: number }).value = this._settings.screenRadius;
     if (u.sampleCount) (u.sampleCount as { value: number }).value = this._settings.sampleCount;
     if (u.tDepth) (u.tDepth as { value: THREE.Texture | null }).value = this._depthTexture;
+    // P9b：新增。boost 与 GLSL uniform `boost` 同名。
+    if (u.boost) (u.boost as { value: number }).value = this._settings.boost;
   }
 }

@@ -269,7 +269,7 @@ export class SceneEngine {
    * 光柱基准不透明度（updateSunPosition 按太阳高度角缩放它的基准）。
    * P9：0.15 → 0.28（实测有效不透明度只有 0.080，几乎不可见）。
    */
-  private shaftBaseOpacity = 0.28;
+  private shaftBaseOpacity = 0.6;
   /** 用户是否要求显示光柱（P8b UI 开关；与太阳高度角渐隐相乘） */
   private shaftUserEnabled = true;
 
@@ -786,9 +786,11 @@ export class SceneEngine {
     // P9 交付物 4：主片与交叉片必须**同时**更新 opacity / visible（两片独立
     // material 实例，只更新一片会让另一片停在构造期基准值）。
     if (this.lightShaft) {
-      // Math.min(sinEl, π/4) 在低角度时等于 sinEl，除以 π/4 归一化；
-      // 高于 π/4 时分子分母同为 π/4 → 恒 1（保持满强度，避免高角度断崖）。
-      const lowAngleFactor = clamp01(Math.min(sinEl, Math.PI / 4) / (Math.PI / 4));
+      // P9b：分母从 π/4 改成 π/6。太阳在 30° 以上（比原来 45° 更早）就保持
+      // 满强度，让下午时段（elevation 30°–60°）也有光柱可见性；低于 30°
+      // 时 sinEl 线性衰减。18:30 太阳高度 23° 时 opacity ≈ 0.6 × 0.77 × 1.4
+      // ≈ 0.65，肉眼可辨。
+      const lowAngleFactor = clamp01(Math.min(sinEl, Math.PI / 6) / (Math.PI / 6));
       const opacity = this.shaftBaseOpacity * lowAngleFactor * 1.4;
       const visible = this.shaftUserEnabled && opacity > 0.001;
       (this.lightShaft.material as MeshBasicMaterial).opacity = opacity;
@@ -798,6 +800,22 @@ export class SceneEngine {
         this.lightShaftCross.visible = visible;
       }
     }
+
+    // ---- P9b 曝光分档 ----
+    // 旧逻辑用 AutoExposure.targetLuminance = 0.17 做动态曝光，但 0.17 是
+    // sRGB 中间灰，对应的 linear 亮度 ≈ 0.024；我们的场景是 HDR 渲染
+    // （sunLight.intensity 最高 3.0、灯罩 emissive 无上限），采样回来的 linear
+    // 亮度全是 1+ 量级。算法必然把 targetExposure 压到 0.02 上下——实测中午
+    // 和夜晚都是 0.14，整个白天看起来像深夜。
+    //
+    // 新方案：按太阳状态分两档曝光，不做完整 autoExposure。
+    //   - 白天（sunInt > 0.2）：exposure = 1.0（ACES 自己处理 HDR）
+    //   - 夜晚（sunInt < 0.05）：exposure = 0.5（让室内灯具成为主视觉）
+    //   - 过渡：线性插值
+    // AutoExposure 类保留（未来可能恢复），但 update() 不再被每帧调用。
+    const nightFactor = clamp01((0.2 - this.sunLight.intensity) / 0.15); // 0（白天）→ 1（夜晚）
+    const targetExposure = 1.0 - nightFactor * 0.5; // 1.0 → 0.5
+    this.backend.setToneMappingExposure(targetExposure);
   }
 
   /** 设置时间 */
@@ -868,11 +886,9 @@ export class SceneEngine {
       // 更新轨道控制器
       this.orbitControls.update();
 
-      // 更新自动曝光
-      if (this.autoExposure) {
-        const exposure = this.autoExposure.update();
-        this.backend.setExposure(exposure);
-      }
+      // P9b：不再每帧调用 autoExposure.update()。曝光改由 updateSunPosition()
+      // 按太阳状态分档设置（白天 1.0 / 夜晚 0.5 / 过渡插值）。
+      // AutoExposure 类保留供未来恢复，但当前不参与渲染管线。
 
       // 渲染
       this.backend.render(this.scene, this.camera);

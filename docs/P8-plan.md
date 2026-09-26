@@ -62,11 +62,24 @@ PMREM RoomEnvironment 环境反射 + timeSpeed 默认 0 + 时间轴收到 16:00�
 
 P8 六阶段全部完成，测试 310 → 435 条。时间轴经用户验收改为全天 0–24h。
 
+## P9 与 P9b 状态
+
+| 阶段 | 状态 | commit / spec |
+|---|---|---|
+| P9 真实阴影 + 自动曝光采样 + 阴影预算 + 窗洞修复 | ✅ 已提交（`6d79627`） | `docs/P9-shadows-exposure-perf-spec.md` |
+| P9 视觉验收 | ✅ 已做（Hermes 浏览器驱动） | `docs/P9-visual-acceptance.md` |
+| P9b 曝光曲线 + 光柱可见性 + 小 UI 清理 | ⏳ 规格已写，待执行 | `docs/P9b-exposure-godrays-spec.md` |
+| P10 UI 视觉统一（场景预设/玻璃面板/HUD/2D 户型图打磨） | ❌ 未开工 | 规格待写（P9b 落地后再定） |
+
 ## 遗留问题（不阻塞，已记录）
 
 1. **P8d 体积光光束偏淡**：太阳低于地平线时已正确隐藏（`shaft.ts` 用 `sinEl` 门控），
-   白昼时段强度受 bloom threshold 0.85 限制，视觉偏弱。可后续单独调亮度。
-2. **autoExposure 采样点未真正生效**（P8d 遗留，本次未触碰）：`sceneEngine.ts:389-392`
-   注释写明待接入。当前画面偏暗由 bloom 阈值 + 环境反射共同造成。
-3. **装饰绿植与参考图仍有差距**：参考 2 的绿植体量更大、层数更多，当前 P8d 版本偏小巧。
+   白昼时段强度受 bloom threshold 0.85 限制，视觉偏弱。**P9b 修复中**。
+2. **P9 自动曝光 targetLuminance=0.17 假设错误**：采样值全部 > 1（linear），
+   算法算出中午和夜晚同一个 exposure=0.14，导致整个白天看起来像深夜。**P9b 修复中**。
+3. **P9 压 bloom strength 到 0.22 顺带压死 godrays**：godrays shader 输出 ~0.05–0.2，
+   远低于 0.85 阈值，bloom 不抓它，光柱看不见。**P9b 修复中**（走 `uBoost` uniform，不动 bloom 参数）。
+4. **FPS 稳定值未重测**：本环境是 SwiftShader，rAF 不派发，5 FPS 是渲染开销而非稳态帧率。
+   需用户在真实 GPU 机器上起 dev server 看 HUD 实测。
+5. **装饰绿植与参考图仍有差距**：参考 2 的绿植体量更大、层数更多，当前 P8d 版本偏小巧。
    可后续增加变体或调高 `FOLIAGE_HEIGHT`。

@@ -30,12 +30,15 @@ function u(p: GodraysPass, key: string): unknown {
 describe('DEFAULT_GODRAYS', () => {
   it('has expected defaults', () => {
     expect(DEFAULT_GODRAYS).toEqual({
-      density: 0.2,
+      // P9b：density 0.2 → 0.5、weight 1.0 → 2.0、新增 boost 3.0。
+      // 让 godrays 输出量级能被 bloom threshold 0.85 抓到（详见 godrays.ts 注释）。
+      density: 0.5,
       decay: 2.0,
-      weight: 1.0,
+      weight: 2.0,
       screenRadius: 1.0,
       sampleCount: 16,
       enabled: true,
+      boost: 3.0,
     });
   });
 });
@@ -93,11 +96,15 @@ describe('GodraysPass', () => {
       screenRadius: DEFAULT_GODRAYS.screenRadius,
       sampleCount: 8,
       enabled: DEFAULT_GODRAYS.enabled,
+      // P9b：新字段，setSettings 未显式覆盖时保留 DEFAULT_GODRAYS 默认值 3.0。
+      boost: DEFAULT_GODRAYS.boost,
     });
     expect(u(p, 'density')).toBe(0.5);
     expect(u(p, 'decay')).toBe(5.0);
     expect(u(p, 'weight')).toBe(2.0);
     expect(u(p, 'sampleCount')).toBe(8);
+    // P9b：uBoost uniform 同步默认值
+    expect(u(p, 'boost')).toBe(DEFAULT_GODRAYS.boost);
   });
 
   it('setSettings enabled toggle reflects on pass.enabled', () => {
