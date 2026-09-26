@@ -70,7 +70,8 @@ P8 六阶段全部完成，测试 310 → 435 条。时间轴经用户验收改�
 | P9 视觉验收 | ✅ 已做（Hermes 浏览器驱动） | `docs/P9-visual-acceptance.md` |
 | P9b 曝光曲线 + 光柱可见性 + 小 UI 清理 | ✅ 已提交（`76dd198`） | `docs/P9b-exposure-godrays-spec.md` |
 | P9b 视觉验收 | ✅ 已做（Hermes 浏览器驱动） | `docs/P9b-visual-acceptance.md` |
-| P10 UI 视觉统一（场景预设/玻璃面板/HUD/2D 户型图打磨） | ❌ 未开工 | 规格待写 |
+| P10 UI 视觉统一（design tokens / HUD 精简 / dev-only 降级提示 / 2D 户型图美化） | ✅ 已提交（`45fc60a`） | `docs/P10-ui-polish-spec.md` |
+| P10 视觉验收 | ✅ 已做（Hermes 浏览器驱动） | `docs/P10-visual-acceptance.md` |
 
 ## 遗留问题（不阻塞，已记录）
 
