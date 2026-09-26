@@ -17,7 +17,10 @@ import type {
   Light,
   Mesh,
   MeshBasicMaterial,
+  MeshStandardMaterial,
   Object3D,
+  Points,
+  PointsMaterial,
   WebGLRenderTarget,
   WebGLRenderer,
 } from 'three';
@@ -38,10 +41,12 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import type { ActivityZone, Fixture } from '../core/types.js';
 import type { RenderBackend } from '../render/backend.js';
 import { buildActivityZone } from '../render/activityZone.js';
+import { buildDustParticles, updateDustPoints } from '../render/dustParticles.js';
 import { buildFurniture } from '../render/furniture.js';
-import { buildLightFromFixture, cctToRGB } from '../render/lightBuilder.js';
+import { buildLightFromFixture, cctToRGB, SHADE_EMISSIVE_SCALE } from '../render/lightBuilder.js';
 import { buildRoom } from '../render/room.js';
 import { buildSkyScene, setSkyBackdropColors, skyColors } from '../render/sky.js';
+import { buildLightShaft } from '../render/volumetricShaft.js';
 import { AutoExposure } from '../render/autoExposure.js';
 import { solarColor, solarPosition } from './solar.js';
 
@@ -86,6 +91,11 @@ interface FixtureLightEntry {
   baseIntensity: number;
   /** 配光是否为近似值（UI 标注用） */
   approximated: boolean;
+  /**
+   * 灯罩 Mesh（P8b）。其 material 的 `emissive` / `emissiveIntensity` 由
+   * setFixtureCct / setFixtureLevel 就地同步，让灯具成为「可见的亮点」。
+   */
+  shade: Mesh | null;
 }
 
 /** 亮度截断到 [0, 1] */
@@ -156,6 +166,22 @@ export class SceneEngine {
 
   /** 复用临时向量（每帧太阳圆盘定位，避免每帧 new Vector3） */
   private _skyTmp = new Vector3();
+
+  /**
+   * 尘埃粒子云（P8b）。渲染层构建，animate 循环每帧用**真实 dt** 漂移
+   * （不乘 timeSpeed——粒子是物理漂浮，不随虚拟时间加速）。
+   */
+  private dustPoints: Points | null = null;
+
+  /**
+   * 假体积光柱（P8b）。opacity 随太阳高度角联动：太阳低于地平线或高于
+   * π/4（正午，光柱不自然）时归零，仅在日出/日落低角度时段可见。
+   */
+  private lightShaft: Mesh | null = null;
+  /** 光柱基准不透明度（updateSunPosition 按太阳高度角缩放它的基准） */
+  private shaftBaseOpacity = 0.15;
+  /** 用户是否要求显示光柱（P8b UI 开关；与太阳高度角渐隐相乘） */
+  private shaftUserEnabled = true;
 
   /**
    * 每帧回调（渲染循环内、render 之前调用）。App 用它把 sceneController.tick
@@ -248,6 +274,24 @@ export class SceneEngine {
     this.skyBackdrop = sky.backdrop;
     this.scene.add(sky.group);
 
+    // 尘埃粒子（P8b）：悬浮在房间中部高度，营造「空气中漂浮的尘埃」质感。
+    // 体积略小于房间，避免粒子贴墙显得假。
+    this.dustPoints = buildDustParticles({
+      count: 350,
+      volumeSize: [roomWidth * 0.8, roomHeight * 0.75, roomDepth * 0.8],
+    });
+    this.dustPoints.position.y = roomHeight * 0.5;
+    this.scene.add(this.dustPoints);
+
+    // 假体积光柱（P8b）：从窗中心射向房间中心的地板落点，正对相机视野。
+    // 几何构建一次固定不变；updateSunPosition 每帧只改 opacity 做渐隐。
+    this.lightShaft = buildLightShaft(
+      this.skyOrigin.clone(),
+      new Vector3(0, 0, 0),
+      { opacity: this.shaftBaseOpacity },
+    );
+    this.scene.add(this.lightShaft);
+
     // 环境反射（P8a 根因 C）：RoomEnvironment PMREM 让 PBR 材质「活起来」。
     // 仅 WebGL2 路径生成；WebGPU / 测试 mock 安全跳过（见 initEnvironment）。
     this.initEnvironment();
@@ -287,14 +331,14 @@ export class SceneEngine {
       this.updateFixture(fixture);
       return;
     }
-    const { object, light, approximated } = buildLightFromFixture(fixture);
+    const { object, light, approximated, shade } = buildLightFromFixture(fixture);
     this.scene.add(object);
     const baseIntensity = light ? light.intensity : 0;
-    this.fixtureLights.set(fixture.id, { object, light, baseIntensity, approximated });
+    this.fixtureLights.set(fixture.id, { object, light, baseIntensity, approximated, shade });
     // 应用当前亮度级别：优先该灯在当前场景下的 sceneLevels，默认全亮
     const level = this.resolveLevel(fixture);
     this.fixtureLevels.set(fixture.id, level);
-    if (light) light.intensity = baseIntensity * level;
+    this.applyFixtureIntensity(fixture.id, level);
   }
 
   /** 移除灯具 */
@@ -363,27 +407,39 @@ export class SceneEngine {
       return;
     }
     this.scene.remove(existing.object);
-    const { object, light, approximated } = buildLightFromFixture(fixture);
+    const { object, light, approximated, shade } = buildLightFromFixture(fixture);
     this.scene.add(object);
     const baseIntensity = light ? light.intensity : 0;
-    this.fixtureLights.set(fixture.id, { object, light, baseIntensity, approximated });
+    this.fixtureLights.set(fixture.id, { object, light, baseIntensity, approximated, shade });
     // resolveLevel 优先读 sceneLevels[activeSceneKey]，否则保留重建前的 level
     const level = this.resolveLevel(fixture);
     this.fixtureLevels.set(fixture.id, level);
-    if (light) light.intensity = baseIntensity * level;
+    this.applyFixtureIntensity(fixture.id, level);
   }
 
   /**
-   * 设置灯具亮度级别：`light.intensity = baseIntensity * clamp(level, 0, 1)`。
+   * 按当前 level 同步灯罩 emissiveIntensity。
+   * emissiveIntensity = clamp(level,0,1) * SHADE_EMISSIVE_SCALE（3.0 让灯罩超过
+   * bloom threshold 0.85 被辉光抓到；HDR 值配合 ACES 不会溢出屏幕）。
+   * 抽成方法：addFixture / updateFixture / setFixtureLevel 三处共用。
+   */
+  private applyFixtureIntensity(fixtureId: string, level: number): void {
+    const entry = this.fixtureLights.get(fixtureId);
+    if (!entry) return;
+    if (entry.light) entry.light.intensity = entry.baseIntensity * level;
+    const shadeMat = entry.shade?.material as MeshStandardMaterial | undefined;
+    if (shadeMat) shadeMat.emissiveIntensity = clamp01(level) * SHADE_EMISSIVE_SCALE;
+  }
+
+  /**
+   * 设置灯具亮度级别：`light.intensity = baseIntensity * clamp(level, 0, 1)`，
+   * 并同步灯罩 emissiveIntensity（P8b：灯具是可见亮点）。
    * 只调强度，不重建光源——场景过渡动画每帧走这里。
    */
   setFixtureLevel(fixtureId: string, level: number): void {
     const clamped = clamp01(level);
     this.fixtureLevels.set(fixtureId, clamped);
-    const entry = this.fixtureLights.get(fixtureId);
-    if (entry?.light) {
-      entry.light.intensity = entry.baseIntensity * clamped;
-    }
+    this.applyFixtureIntensity(fixtureId, clamped);
   }
 
   /** 查询灯具当前亮度级别（过渡动画用它作为 from 端点）；未登记返回 undefined */
@@ -400,6 +456,9 @@ export class SceneEngine {
     if (!entry?.light) return;
     const { r, g, b } = cctToRGB(kelvin);
     entry.light.color.setRGB(r, g, b);
+    // P8b：灯罩 emissive 颜色跟随色温，保持「灯罩亮色 = 光源颜色」一致。
+    const shadeMat = entry.shade?.material as MeshStandardMaterial | undefined;
+    if (shadeMat) shadeMat.emissive.setRGB(r, g, b);
   }
 
   /** 同步当前激活场景 key（影响 addFixture / updateFixture 的亮度恢复） */
@@ -512,6 +571,22 @@ export class SceneEngine {
     if (this.skyBackdrop) {
       setSkyBackdropColors(this.skyBackdrop, c.top, c.horizon);
     }
+
+    // ---- 假体积光柱：仅由太阳高度角驱动不透明度（P8b）----
+    // 几何固定为「窗中心 → 房间中心地板」：相机在东南角望北墙，这道光柱
+    // 正对视野，视觉最稳。不重建几何（PlaneGeometry 尺寸固定，每帧重建浪费）；
+    // 只按太阳高度角做渐隐——日出/日落低角度可见，太阳高于 π/4（正午）或
+    // 低于地平线时归零隐藏。
+    // 注意：不能复用 _skyTmp，它此刻仍持有下方太阳圆盘定位需要的天空方向。
+    if (this.lightShaft) {
+      // Math.min(sinEl, π/4) 在低角度时等于 sinEl，除以 π/4 归一化；
+      // 高于 π/4 时分子分母同为 π/4 → 恒 1（保持满强度，避免高角度断崖）。
+      const lowAngleFactor = clamp01(Math.min(sinEl, Math.PI / 4) / (Math.PI / 4));
+      const shaftMat = this.lightShaft.material as MeshBasicMaterial;
+      shaftMat.opacity = this.shaftBaseOpacity * lowAngleFactor * 1.4;
+      // 最终可见性 = 用户开关 × 太阳高度角是否足够低
+      this.lightShaft.visible = this.shaftUserEnabled && shaftMat.opacity > 0.001;
+    }
   }
 
   /** 设置时间 */
@@ -564,6 +639,12 @@ export class SceneEngine {
 
       // 推进时间
       this.advanceTime(deltaTime);
+
+      // 尘埃漂移（P8b）：用**真实墙钟 dt**，不乘 timeSpeed——粒子是物理漂浮，
+      // 即使虚拟时间冻结/加速，尘埃仍按真实节奏缓缓浮动。
+      if (this.dustPoints && deltaTime > 0) {
+        updateDustPoints(this.dustPoints, deltaTime, time / 1000);
+      }
 
       // 每帧回调（场景过渡动画等）
       this.frameCallback?.(time);
@@ -628,6 +709,20 @@ export class SceneEngine {
     return this.sunLight.intensity;
   }
 
+  /** 设置尘埃粒子可见性（P8b 性能开关；粒子始终漂移，仅切换是否渲染） */
+  setDustVisible(enabled: boolean): void {
+    if (this.dustPoints) this.dustPoints.visible = enabled;
+  }
+
+  /** 设置体积光柱可见性（P8b 性能开关；与太阳高度角的渐隐相乘） */
+  setLightShaftVisible(enabled: boolean): void {
+    if (this.lightShaft) {
+      // 记录用户意图；updateSunPosition 每次按其 × 太阳高度角 决定最终 visible。
+      this.shaftUserEnabled = enabled;
+      this.lightShaft.visible = enabled && this.lightShaft.visible;
+    }
+  }
+
   /** 设置相机位置（朝向房间中心工作面高度；同步轨道控制器目标点保持一致） */
   setCameraPosition(x: number, y: number, z: number): void {
     this.camera.position.set(x, y, z);
@@ -645,6 +740,23 @@ export class SceneEngine {
   dispose(): void {
     this.stop();
     this.orbitControls.dispose();
+    // 清理 P8b 体积光 / 尘埃粒子（CanvasTexture + BufferGeometry 都需显式释放）
+    if (this.dustPoints) {
+      this.scene.remove(this.dustPoints);
+      this.dustPoints.geometry.dispose();
+      const dustMat = this.dustPoints.material as PointsMaterial;
+      if (dustMat.map) dustMat.map.dispose();
+      dustMat.dispose();
+      this.dustPoints = null;
+    }
+    if (this.lightShaft) {
+      this.scene.remove(this.lightShaft);
+      this.lightShaft.geometry.dispose();
+      const shaftMat = this.lightShaft.material as MeshBasicMaterial;
+      if (shaftMat.map) shaftMat.map.dispose();
+      shaftMat.dispose();
+      this.lightShaft = null;
+    }
     // 清理 PMREM 环境贴图产物（仅 WebGL2 路径生成；未生成时为 null，安全跳过）
     this.scene.environment = null;
     this.envRenderTarget?.dispose();

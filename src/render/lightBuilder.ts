@@ -71,6 +71,14 @@ const SHADOW_MAP_SIZE = 1024;
 /** 点光源阴影贴图尺寸（较小，遮挡面少） */
 const POINT_SHADOW_MAP_SIZE = 512;
 
+/**
+ * 灯罩发光强度满量程系数（P8b）。emissiveIntensity = clamp(level,0,1) * 该值
+ * （规格公式另乘 shade.intensity，但 ShadeMaterial 当前无此字段，取 1）。
+ * 3.0 让灯罩亮度超过 bloom threshold（0.85）被辉光抓到；MeshStandardMaterial
+ * 的 emissiveIntensity 可 >1（HDR），配合 ACESFilmic 不会溢出屏幕。
+ */
+export const SHADE_EMISSIVE_SCALE = 3.0;
+
 // ---------------------------------------------------------------------------
 // 物理量换算
 // ---------------------------------------------------------------------------
@@ -160,6 +168,12 @@ export interface LightBuildResult {
   object: Object3D;
   /** 物理光源（本实现所有类型都能建模，故总有值） */
   light?: Light;
+  /**
+   * 灯罩可视化 Mesh（P8b）。暴露给引擎：setFixtureLevel 同步
+   * `emissiveIntensity`、setFixtureCct 同步 `emissive` 颜色，
+   * 让灯具是「可见的发光体」而非隐形光源。
+   */
+  shade: Mesh | null;
   /** 声明了 IES 文件（但本阶段未真实解析，仍为近似） */
   isIES: boolean;
   /** 配光是否为近似值（用于 UI 标注，工程红线 5） */
@@ -325,12 +339,17 @@ export function buildLightFromFixture(f: Fixture): LightBuildResult {
     }
   }
 
-  // --- 灯罩 Mesh（可视化替身） --------------------------------------------
+  // --- 灯罩 Mesh（可视化替身 + 可见发光体，P8b） --------------------------
+  // 除反射光外，让灯罩自身发光（emissive）：灯具是「可见的亮点」而非隐形光源。
+  // emissive 颜色 = 光源色温色（cctToRGB）；emissiveIntensity 初始按全亮，
+  // 由引擎 setFixtureLevel 按当前 level 同步（公式见 sceneEngine）。
   const shade = f.shape.shade;
   const shadeMat = new MeshStandardMaterial({
     color: new Color(shade.color),
     roughness: shade.roughness,
     metalness: shade.metalness,
+    emissive: new Color(r, g, b),
+    emissiveIntensity: SHADE_EMISSIVE_SCALE,
   });
   const shadeMesh = new Mesh(shadeGeometry(f.shape.form, f.shape.diameter), shadeMat);
   shadeMesh.position.set(fx, fy, fz);
@@ -342,5 +361,5 @@ export function buildLightFromFixture(f: Fixture): LightBuildResult {
   shadeMesh.name = `${f.id}-shade`;
   group.add(shadeMesh);
 
-  return { object: group, light, isIES, approximated };
+  return { object: group, light, shade: shadeMesh, isIES, approximated };
 }
