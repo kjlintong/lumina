@@ -85,7 +85,7 @@ const KEYFRAMES: SkyKeyframe[] = [
     // 日落（elevation ≈ π/30 ≈ 6°）
     e: Math.PI / 30,
     top: hex(0x1a2a4a),
-    horizon: hex(0xff6a2a),
+    horizon: hex(0xe06020), // R≤224：线性 R≈0.73，低于 bloom 阈值 0.85，避免窗户被洗白
     ambientSky: hex(0x2a3450),
     ambientGround: hex(0x3a2a22),
     background: hex(0x22203a),
@@ -94,7 +94,7 @@ const KEYFRAMES: SkyKeyframe[] = [
     // 傍晚（elevation ≈ π/8 ≈ 22.5°）
     e: Math.PI / 8,
     top: hex(0x2a4a7a),
-    horizon: hex(0xff9a4d),
+    horizon: hex(0xe09a4d), // 同上，R 压到 224
     ambientSky: hex(0x4a5a7a),
     ambientGround: hex(0x4a3a2e),
     background: hex(0x3a4a6a),
@@ -187,8 +187,11 @@ export function setSkyBackdropColors(backdrop: Mesh, top: Rgb, horizon: Rgb): vo
 
   for (let i = 0; i <= BACKDROP_SEG; i++) {
     const t = i / BACKDROP_SEG;
-    // 底部 12% 保持地平线暖色形成明显暖色带，其余平滑过渡到天顶
-    const w = t > 0.12 ? 1 : 0;
+    // 底部 12% 保持地平线暖色形成明显暖色带；其上随 t 增大平滑过渡到天顶。
+    // 注意：必须用连续插值，不能用 `t > 0.12 ? 1 : 0` 的二值开关——
+    // 二值会让背板直接从天顶蓝跳变到地平线橙，没有任何中间调，
+    // 视觉上等同纯色块（且与 bloom 叠加后表现怪异）。
+    const w = Math.min((t - 0.12) / (1 - 0.12), 1); // 0（地平线）→ 1（天顶）
     const r = hl.r + (tl.r - hl.r) * w;
     const g = hl.g + (tl.g - hl.g) * w;
     const b = hl.b + (tl.b - hl.b) * w;
