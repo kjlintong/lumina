@@ -278,8 +278,10 @@ export function buildSkyScene(windowWorldPos: Vector3, windowNormal: Vector3): S
 
   // 太阳圆盘：toneMapped=false 保证它是画面里最亮的点、触发 bloom。
   // 位置由引擎每帧根据太阳角度写入（这里先放到窗外 15m 占位）。
+  // P9 交付物 4：半径 1.4 → 0.55。旧 1.4m 圆盘在 24m 外占屏高约 9%，
+  // 配合 bloom 会把整面窗洞糊成白光；缩到 0.55m 让 bloom 抓到但不蔓延。
   const sunMat = new MeshBasicMaterial({ color: 0xffffff, toneMapped: false, fog: false });
-  const sun = new Mesh(new SphereGeometry(1.4, 24, 24), sunMat);
+  const sun = new Mesh(new SphereGeometry(0.55, 24, 24), sunMat);
   sun.castShadow = false;
   sun.receiveShadow = false;
   sun.position.set(windowNormal.x * 15, windowNormal.y * 15, windowNormal.z * 15);

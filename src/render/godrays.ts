@@ -41,7 +41,11 @@ export const DEFAULT_GODRAYS: GodraysSettings = {
   decay: 2.0,
   weight: 1.0,
   screenRadius: 1.0,
-  sampleCount: 24,
+  // P9 交付物 3 兜底：24 → 16。godraysRT 已降到半分辨率，sampleCount 再降一档
+  // 进一步压低每帧 ray-marching 成本（配合 5-8 FPS → 30+ 的目标）。
+  // 注意：下方 godraysShader.uniforms.sampleCount.value 必须同步改同一字面量，
+  // 两处各写一份会静默漂移（uniform 初始值与本常量不一致）。
+  sampleCount: 16,
   enabled: true,
 };
 
@@ -55,7 +59,7 @@ export const godraysShader = {
     decay: { value: 2.0 },
     weight: { value: 1.0 },
     screenRadius: { value: 1.0 },
-    sampleCount: { value: 24 },
+    sampleCount: { value: 16 },
   },
 
   vertexShader: `

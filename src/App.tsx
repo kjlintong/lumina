@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Raycaster, Vector2, Vector3 } from 'three';
+import { Raycaster, Vector2 } from 'three';
 import type { Object3D } from 'three';
 import type { ActivityZone, Fixture } from './core/types.js';
 import { createBackend } from './render/backend.js';
@@ -319,6 +319,15 @@ export default function App() {
         });
         engineRef.current = engine;
         backendRef.current = result.backend;
+        // TEMP-DEBUG (P9): 供浏览器控制台驱动引擎做实测。
+        // 配合 src/dev-debug.ts（main.tsx 里 `?debug` 条件导入）使用。
+        // P9 完成后与本行、dev-debug.ts、main.tsx 的导入一并删除。
+        (window as unknown as { __luminaReady?: unknown }).__luminaReady = {
+          engine,
+          get backend() {
+            return result.backend;
+          },
+        };
         const controller = new SceneController(engine);
         controllerRef.current = controller;
 
@@ -354,24 +363,21 @@ export default function App() {
           }
         });
 
-        // 场景过渡动画 + Godrays 光源跟随太阳（挂进渲染循环）
-        const _tmpVec = new Vector3();
+        // 场景过渡动画 + Godrays 光源锚点跟随窗中心（挂进渲染循环）
+        //
+        // P9 交付物 2：godrays 屏幕锚点改为**窗洞中心**投影，不再用太阳世界坐标。
+        // 旧实现在 17:45 默认相机下把太阳投影到 UV.x ≈ -0.23（窗外 15m+，必然
+        // 出视野），setGodraysLightPosition 从未被有效调用，锚点永远停在默认值
+        // (0.5, 0.8)。现在用 getWindowScreenAnchor：窗在视野内才更新，窗不在
+        // 视野内**保持上一个锚点**（不归零、不复位到 0.5）。
         engine.setFrameCallback(() => {
           controller.tick();
-          // 将太阳世界坐标投影到屏幕 UV，驱动体积光光源位置
           const eng = engineRef.current;
           const bkd = backendRef.current;
-          if (eng && bkd?.setGodraysLightPosition) {
-            const sun = eng.getSunPosition();
-            if (eng.getSunIntensity() > 0) {
-              _tmpVec.set(sun.x, sun.y, sun.z).project(eng.getCamera());
-              // NDC → UV (0-1)
-              const uvX = (_tmpVec.x + 1) / 2;
-              const uvY = (_tmpVec.y + 1) / 2;
-              // 仅当太阳在可视范围内时更新（z < 1 表示在近平面之前）
-              if (_tmpVec.z < 1) {
-                bkd.setGodraysLightPosition(uvX, uvY);
-              }
+          if (eng && bkd?.setGodraysLightPosition && eng.getSunIntensity() > 0) {
+            const anchor = eng.getWindowScreenAnchor(eng.getCamera());
+            if (anchor) {
+              bkd.setGodraysLightPosition(anchor.x, anchor.y);
             }
           }
         });

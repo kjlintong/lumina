@@ -104,7 +104,7 @@ export function RenderPanel({
               onChange={(e) => {
                 const on = e.target.checked;
                 setBloomOn(on);
-                onBloomChange(on ? 0.35 : 0, on ? 0.4 : 0, on ? 0.85 : 1);
+                onBloomChange(on ? 0.22 : 0, on ? 0.3 : 0, on ? 0.85 : 1);
               }}
             />
           </label>

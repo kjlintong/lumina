@@ -135,9 +135,10 @@ function buildNorthWindow(
   const lintelHeight = height - (windowSill + windowHeight);
   if (lintelHeight > 0) seg(windowWidth, lintelHeight, 0, windowSill + windowHeight);
 
-  // 窗框：4 根细木条（深色木），投出窗框阴影
+  // 窗框：5 根细木条（深色木），投出窗框阴影
   const frameMaterial = new MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.7, metalness: 0.0 });
-  const frameT = 0.06;
+  // P9 交付物 4：0.06 → 0.09。旧框太细（6cm），投影几乎看不见，光斑整片糊在地板上。
+  const frameT = 0.09;
   const frameD = WALL_THICKNESS + 0.02; // 略凸出墙面，避免 z-fighting
   const winCenterY = windowSill + windowHeight / 2;
   const frame: Mesh[] = [];
@@ -153,6 +154,10 @@ function buildNorthWindow(
   bar(frameT, windowHeight, windowWidth / 2, winCenterY); // 右梃
   bar(windowWidth + frameT, frameT, 0, windowSill + windowHeight); // 上框
   bar(windowWidth + frameT, frameT, 0, windowSill); // 下框
+  // P9 交付物 4：窗中梃（vertical mullion），在左右梃正中。
+  // 让落日光斑被切成 2 格，是「落地窗室内光斑」的视觉核心。
+  // 走同一个 bar 工厂函数，继承 castShadow/receiveShadow 与 frame 数组登记。
+  bar(frameT, windowHeight, 0, winCenterY);
 
   // 玻璃：透明平面。
   // 注意：不能用 `MeshPhysicalMaterial.transmission` —— 它**必须**配合

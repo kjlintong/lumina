@@ -38,5 +38,5 @@
     }
   },
   "include": ["src", "vitest.setup.ts"],
-  "exclude": ["vite.config.ts"]
+  "exclude": ["vite.config.ts", "src/dev-debug.ts"]
 }

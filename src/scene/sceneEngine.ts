@@ -14,6 +14,7 @@
  */
 
 import type {
+  Camera,
   Light,
   Line,
   Mesh,
@@ -33,6 +34,7 @@ import {
   HemisphereLight,
   PerspectiveCamera,
   PMREMGenerator,
+  Quaternion,
   Scene,
   SRGBColorSpace,
   Vector3,
@@ -84,6 +86,15 @@ const SUN_DIST = 15;
 /** 窗外太阳圆盘的视觉距离（米），比平行光更远以免遮挡窗框 */
 const SKY_SUN_DIST = 24;
 
+/**
+ * 太阳阴影贴图边长（P9 从 2048 降到 1024）。
+ *
+ * 2048² 是全场景最大的单张阴影贴图，也是 5-8 FPS 的主要成本之一。
+ * 太阳用正交相机（非立方体），1024² 投影到 ±10m 的视锥上，
+ * 每像素覆盖约 2cm，对 6×4.5m 的房间足够。
+ */
+const SUN_SHADOW_MAP_SIZE = 1024;
+
 /** 单盏灯在场景图中的登记项 */
 interface FixtureLightEntry {
   /** 场景图根节点（光源 + 灯罩 Mesh） */
@@ -117,6 +128,32 @@ export function countRenderableObjects(scene: Scene): number {
     if (o.isMesh || o.isPoints || o.isLine) count++;
   });
   return count;
+}
+
+/**
+ * 把世界坐标投影到屏幕 UV（0..1）。P9 交付物 2：godrays 屏幕锚点必须落在
+ * 相机视野内，否则 shader 的 lightScreen 采样会退化（旧实现把太阳世界坐标
+ * 直接投影，太阳在窗外 15m+ 外，投影 UV.x 恒为负 → 锚点永远停在默认值）。
+ *
+ * 纯几何计算，不分配对象（复用 out），便于单测（无需真实 WebGL 渲染）。
+ *
+ * @param worldPos 世界坐标
+ * @param camera   已完成 updateMatrixWorld / updateProjectionMatrix 的相机
+ * @param out      复用的 NDC 载体（默认新建一个 Vector3）
+ * @returns 屏幕 UV + NDC z；`z >= 1`（近平面外/相机背后）或 UV 落在 [0,1] 之外
+ *          返回 null（调用方应保持上一个锚点，不要复位）
+ */
+export function projectToScreenUV(
+  worldPos: Vector3,
+  camera: Camera,
+  out: Vector3 = new Vector3(),
+): { x: number; y: number; z: number } | null {
+  out.copy(worldPos).project(camera);
+  if (out.z >= 1) return null;
+  const uvX = (out.x + 1) / 2;
+  const uvY = (out.y + 1) / 2;
+  if (uvX < 0 || uvX > 1 || uvY < 0 || uvY > 1) return null;
+  return { x: uvX, y: uvY, z: out.z };
 }
 
 /**
@@ -184,6 +221,15 @@ export class SceneEngine {
   private skyOrigin = new Vector3();
 
   /**
+   * 窗玻璃 mesh（P9 交付物 2）。getWindowScreenAnchor 用它的局部原点做锚点：
+   * 玻璃 PlaneGeometry 的局部 (0,0) 就是窗洞中心，经 localToWorld 转到世界坐标。
+   * **不能**直接用 `this.skyOrigin` —— 那是 `glass.position`（包含窗台高度），
+   * 恰好等于窗洞中心的世界坐标只有在 `matrixWorld` 恒等时成立，而玻璃嵌在
+   * room/window-north 两级 group 下，必须走 localToWorld 才对。
+   */
+  private windowGlass: Mesh | null = null;
+
+  /**
    * 窗外城市天际线（P8e）。嵌套在 sky-scene group 内，继承窗中心原点，
    * 因此局部坐标即世界坐标偏移。静态剪影：MeshBasicMaterial 不受光照、
    * 不参与阴影，始终可见。sky-scene 整组移除时本字段一并回收，不需单独 dispose。
@@ -192,6 +238,15 @@ export class SceneEngine {
 
   /** 复用临时向量（每帧太阳圆盘定位，避免每帧 new Vector3） */
   private _skyTmp = new Vector3();
+
+  /**
+   * 复用临时向量（P9 交付物 2：每帧算窗中心屏幕锚点）。避免每帧 new Vector3。
+   * 与 `_skyTmp` 分开：updateSunPosition 里 _skyTmp 持有太阳方向，
+   * getWindowScreenAnchor 被 App 的 frame callback 在渲染前调用，两者不重叠。
+   * `_anchorWorld` 承接 localToWorld 的世界坐标结果，`_anchorTmp` 承接 project 的 NDC。
+   */
+  private _anchorWorld = new Vector3();
+  private _anchorTmp = new Vector3();
 
   /**
    * 尘埃粒子云（P8b）。渲染层构建，animate 循环每帧用**真实 dt** 漂移
@@ -204,8 +259,17 @@ export class SceneEngine {
    * π/4（正午，光柱不自然）时归零，仅在日出/日落低角度时段可见。
    */
   private lightShaft: Mesh | null = null;
-  /** 光柱基准不透明度（updateSunPosition 按太阳高度角缩放它的基准） */
-  private shaftBaseOpacity = 0.15;
+  /**
+   * 光柱交叉平面（P9 交付物 4）。单片光柱在正对/正侧视角下几乎是零面积、看不见；
+   * 克隆一片并绕光柱轴（世界 Y）转 90°，任意视角都能看到一片。构造期一次性
+   * 创建（不是每帧 new），两个平面各自持有独立 material 实例（opacity 互不影响）。
+   */
+  private lightShaftCross: Mesh | null = null;
+  /**
+   * 光柱基准不透明度（updateSunPosition 按太阳高度角缩放它的基准）。
+   * P9：0.15 → 0.28（实测有效不透明度只有 0.080，几乎不可见）。
+   */
+  private shaftBaseOpacity = 0.28;
   /** 用户是否要求显示光柱（P8b UI 开关；与太阳高度角渐隐相乘） */
   private shaftUserEnabled = true;
 
@@ -254,14 +318,30 @@ export class SceneEngine {
     // 光照
     this.sunLight = new DirectionalLight(0xffffff, 1);
     this.sunLight.castShadow = true;
-    this.sunLight.shadow.mapSize.set(2048, 2048);
+    // P9 阴影预算：2048 → 1024（2048² 是 5 FPS 的主要成本之一）。
+    // 太阳只有一张、且是正交相机（非立方体），1024² 足够 6×4.5m 的房间。
+    this.sunLight.shadow.mapSize.set(SUN_SHADOW_MAP_SIZE, SUN_SHADOW_MAP_SIZE);
     this.sunLight.shadow.camera.near = 0.5;
     this.sunLight.shadow.camera.far = 50;
     this.sunLight.shadow.camera.left = -10;
     this.sunLight.shadow.camera.right = 10;
     this.sunLight.shadow.camera.top = 10;
     this.sunLight.shadow.camera.bottom = -10;
+    // P9 关键修复：**必须把 target 加入场景**。
+    // DirectionalLight.target 不参与场景图时，Three.js 每帧无法更新它的
+    // matrixWorld（见 `WebGLShadowMap` 的注释：target 的矩阵只在其是场景
+    // 子对象时更新），shadow camera 就会朝向 (0,0,0) 的默认位而不是我们
+    // 期望的方向 —— 这是「阴影开关 0 像素变化」的根因。
+    // updateSunPosition 每帧只改 sunLight.position，target 恒在原点，
+    // 因此必须显式 add，让 shadow camera 稳定朝房间中心。
+    this.sunLight.target.position.set(0, 0.5, 0);
     this.scene.add(this.sunLight);
+    this.scene.add(this.sunLight.target);
+    // P9：偏置调优。directional 光下 `bias` 用负值抵消「自遮挡」剥离线；
+    // `normalBias` 让顶点沿法线偏移采样，消除墙面/天花板附近的阴影泄漏。
+    // 不要把 bias 设成很大的负数（会导致阴影从物体表面剥离成一条亮线）。
+    this.sunLight.shadow.bias = -0.0005;
+    this.sunLight.shadow.normalBias = 0.03;
 
     this.ambientLight = new AmbientLight(0x404040, 0.3);
     this.scene.add(this.ambientLight);
@@ -300,7 +380,12 @@ export class SceneEngine {
     // 窗中心直接取玻璃 mesh 的位置（房间组在原点，局部坐标即世界坐标），
     // 外法线朝北 (0,0,-1)。sky-scene 不参与阴影、不受光照，始终可见。
     const glass = windows[0];
-    if (glass) this.skyOrigin.copy(glass.position);
+    if (glass) {
+      this.skyOrigin.copy(glass.position);
+      // P9 交付物 2：保存玻璃 mesh 本身（不是 skyOrigin 位置），
+      // getWindowScreenAnchor 需要它的 localToWorld 才能得到窗洞中心。
+      this.windowGlass = glass;
+    }
     const sky = buildSkyScene(this.skyOrigin, new Vector3(0, 0, -1));
     this.skySun = sky.sun;
     this.skySunMat = sky.sun.material as MeshBasicMaterial;
@@ -325,12 +410,29 @@ export class SceneEngine {
 
     // 假体积光柱（P8b）：从窗中心射向房间中心的地板落点，正对相机视野。
     // 几何构建一次固定不变；updateSunPosition 每帧只改 opacity 做渐隐。
-    this.lightShaft = buildLightShaft(
-      this.skyOrigin.clone(),
-      new Vector3(0, 0, 0),
-      { opacity: this.shaftBaseOpacity },
-    );
-    this.scene.add(this.lightShaft);
+    //
+    // P9 交付物 4：做**双平面交叉**。单片光柱在正对或正侧视角下投影面积
+    // 趋近于零、几乎不可见；克隆一片绕光柱轴转 90°，任意视角都能看见一片。
+    // 两平面各自持有独立 material 实例（clone 一次），opacity 互不影响。
+    // buildLightShaft 签名保持不变（volumetricShaft.test.ts 依赖单 Mesh 返回值）。
+    const shaft = buildLightShaft(this.skyOrigin.clone(), new Vector3(0, 0, 0), {
+      opacity: this.shaftBaseOpacity,
+    });
+    // buildLightShaft 内部用 MeshBasicMaterial 构建，但 Mesh.material 类型是
+    // `Material | Material[]`，clone() 不在 Material 基类上 → 需断言。
+    shaft.material = (shaft.material as MeshBasicMaterial).clone();
+    const cross = shaft.clone();
+    cross.material = (shaft.material as MeshBasicMaterial).clone();
+    cross.position.copy(shaft.position);
+    cross.quaternion.copy(shaft.quaternion);
+    const quarter = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2);
+    cross.quaternion.multiply(quarter);
+    // 第二片色调略偏红，强化交叉处的体积厚度感（主片暖橙 0xffc080）
+    (cross.material as MeshBasicMaterial).color.setHex(0xff9a4d);
+    this.lightShaft = shaft;
+    this.lightShaftCross = cross;
+    this.scene.add(shaft);
+    this.scene.add(cross);
 
     // 装饰绿植（P8d）：放在窗侧角落，承接「绿植点缀」——冷色家具与暖色夕照
     // 之间的色彩过渡。位置按房间尺寸算出，并避开已知活动区（lounge/dining）
@@ -389,6 +491,14 @@ export class SceneEngine {
       // 只赋 environment（提供环境反射），**不**赋 background ——
       // 背景仍由 skyColors 渐变负责，否则会变成灰白房间外壳。
       this.scene.environment = rt.texture;
+
+      // P9 交付物 4：环境反射只做「细节补充」而非主光。PMREM 会让所有 PBR 面
+      // 都反射环境光，室内白天整体发灰亮（压掉太阳的冷暖对比）。降到 0.35，
+      // 主光交给太阳与灯具。r163+ 支持 `Scene.environmentIntensity`。
+      const sceneWithIntensity = this.scene as Scene & { environmentIntensity?: number };
+      if ('environmentIntensity' in this.scene) {
+        sceneWithIntensity.environmentIntensity = 0.35;
+      }
     } catch {
       // headless / 无 WebGL 上下文等极端环境：跳过环境贴图，不致命
     }
@@ -544,6 +654,30 @@ export class SceneEngine {
   }
 
   /**
+   * 窗洞中心在当前相机下投影到屏幕 UV（P9 交付物 2，godrays 锚点）。
+   *
+   * 锚点取法：玻璃 mesh 局部 (0,0) 即窗洞中心（PlaneGeometry 以自身中心为原点），
+   * 经 `localToWorld` 转到世界坐标再投影。**不是** `this.skyOrigin` —— 那是
+   * `glass.position` 的一份拷贝，在玻璃嵌于 room/window-north 两级 group 下时
+   * 与世界坐标不重合。
+   *
+   * @returns 窗在视野内返回 UV（0..1）；窗不在视野内（UV 出界或 z>=1）返回 null。
+   *          调用方在 null 时**保持上一个锚点**，不要复位到默认值。
+   */
+  getWindowScreenAnchor(camera: Camera): { x: number; y: number } | null {
+    const glass = this.windowGlass;
+    if (!glass) return null;
+    // 相机矩阵可能刚被 orbitControls 更新过（update() 改了 position/quaternion
+    // 但 matrixWorld 在下一次渲染才刷新），显式刷新保证 project() 用的是当前位姿。
+    camera.updateMatrixWorld();
+    const worldCenter = this._anchorWorld.set(0, 0, 0);
+    glass.localToWorld(worldCenter);
+    const uv = projectToScreenUV(worldCenter, camera, this._anchorTmp);
+    if (!uv) return null;
+    return { x: uv.x, y: uv.y };
+  }
+
+  /**
    * 解析灯具当前应有的亮度级别：
    * 若该灯的 `control.sceneLevels[activeSceneKey]` 有值则用之（场景目标），
    * 否则沿用引擎已记录的 level，默认全亮（1）。
@@ -623,12 +757,14 @@ export class SceneEngine {
         this.skySunMat.color.setRGB(0, 0, 0);
       } else {
         const { r, g, b } = solarColor(elevation);
-        // 注意：transmission 玻璃会采样本太阳圆盘，color > 1.0 会被 bloom 处理
-        // 但同时让玻璃采样到 HDR 过曝值 → 窗全白。这里钳到 1.0，过曝感交给 bloom。
+        // P9 交付物 4：钳到 3.0（旧值 1.0 已过期）。圆盘从 1.4m 缩到 0.55m 后
+        // 不再糊满窗洞，用 HDR 值让 bloom 抓到它本体；玻璃是 opacity 0.12 的
+        // 透明面（非 transmission），采样不受 3.0 影响，不会把窗染白。
+        // toneMapped=false 保留 —— 太阳圆盘是画面里最亮的点，正是 bloom 目标。
         this.skySunMat.color.setRGB(
-          Math.min(r, 1),
-          Math.min(g, 1),
-          Math.min(b, 1),
+          Math.min(r, 3.0),
+          Math.min(g, 3.0),
+          Math.min(b, 3.0),
         );
       }
     }
@@ -647,14 +783,20 @@ export class SceneEngine {
     // 只按太阳高度角做渐隐——日出/日落低角度可见，太阳高于 π/4（正午）或
     // 低于地平线时归零隐藏。
     // 注意：不能复用 _skyTmp，它此刻仍持有下方太阳圆盘定位需要的天空方向。
+    // P9 交付物 4：主片与交叉片必须**同时**更新 opacity / visible（两片独立
+    // material 实例，只更新一片会让另一片停在构造期基准值）。
     if (this.lightShaft) {
       // Math.min(sinEl, π/4) 在低角度时等于 sinEl，除以 π/4 归一化；
       // 高于 π/4 时分子分母同为 π/4 → 恒 1（保持满强度，避免高角度断崖）。
       const lowAngleFactor = clamp01(Math.min(sinEl, Math.PI / 4) / (Math.PI / 4));
-      const shaftMat = this.lightShaft.material as MeshBasicMaterial;
-      shaftMat.opacity = this.shaftBaseOpacity * lowAngleFactor * 1.4;
-      // 最终可见性 = 用户开关 × 太阳高度角是否足够低
-      this.lightShaft.visible = this.shaftUserEnabled && shaftMat.opacity > 0.001;
+      const opacity = this.shaftBaseOpacity * lowAngleFactor * 1.4;
+      const visible = this.shaftUserEnabled && opacity > 0.001;
+      (this.lightShaft.material as MeshBasicMaterial).opacity = opacity;
+      this.lightShaft.visible = visible;
+      if (this.lightShaftCross) {
+        (this.lightShaftCross.material as MeshBasicMaterial).opacity = opacity;
+        this.lightShaftCross.visible = visible;
+      }
     }
   }
 
@@ -816,6 +958,10 @@ export class SceneEngine {
       this.shaftUserEnabled = enabled;
       this.lightShaft.visible = enabled && this.lightShaft.visible;
     }
+    // P9 交付物 4：交叉片与主片同步（否则用户关光柱时另一片仍显示）
+    if (this.lightShaftCross) {
+      this.lightShaftCross.visible = enabled && this.lightShaftCross.visible;
+    }
   }
 
   /** 设置相机位置（朝向房间中心工作面高度；同步轨道控制器目标点保持一致） */
@@ -851,6 +997,15 @@ export class SceneEngine {
       if (shaftMat.map) shaftMat.map.dispose();
       shaftMat.dispose();
       this.lightShaft = null;
+    }
+    // P9 交付物 4：交叉片独立 material（克隆），需单独 dispose；geometry 与主片
+    // 共享同一 PlaneGeometry，主片已 dispose，这里不再重复调用。
+    if (this.lightShaftCross) {
+      this.scene.remove(this.lightShaftCross);
+      const crossMat = this.lightShaftCross.material as MeshBasicMaterial;
+      if (crossMat.map) crossMat.map.dispose();
+      crossMat.dispose();
+      this.lightShaftCross = null;
     }
     // 清理装饰绿植（P8d）：BoxGeometry/ConeGeometry/CylinderGeometry + 各自 material
     if (this.decorPlants) {

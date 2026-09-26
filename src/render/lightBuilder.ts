@@ -65,11 +65,36 @@ const POINT_DISTANCE = 5;
 /** SpotLight 半角下限：为 0 时 Three.js 会产生 NaN */
 const MIN_HALF_ANGLE = 0.02;
 
-/** SpotLight 阴影贴图尺寸（较大以维持光斑边缘质量） */
+/** 阴影贴图尺寸（P9 从 2048 降到 1024：阴影预算收敛，恢复帧率） */
 const SHADOW_MAP_SIZE = 1024;
 
-/** 点光源阴影贴图尺寸（较小，遮挡面少） */
+/** 点光源阴影贴图尺寸（已不投阴影，保留以防回退） */
 const POINT_SHADOW_MAP_SIZE = 512;
+
+/**
+ * P9 阴影预算：**只有向下投射的光投阴影**。
+ *
+ * 实测：默认场景 4 盏投阴影光（1 directional + 1 spot + 2 point），
+ * 每帧渲染 14 张阴影贴图（PointLight 是立方体贴图 = 6 面），
+ * HUD 帧率 5-8 FPS，控制台 `Runtime.evaluate` 都会超时。
+ *
+ * `downlight` / `spot` 的阴影落在活动区工作面上，视觉价值最高；
+ * `pendant` / `sconce` / `floor` / `table` 的阴影是「灯下暗斑」，
+ * 视觉收益低、性能成本高，一律不投。这是**有意的产品取舍**，
+ * 不是 bug —— 若未来需要恢复，改这里即可。
+ */
+const SHADOW_CASTING_FIXTURE_TYPES: ReadonlySet<string> = new Set([
+  'downlight',
+  'spot',
+]);
+
+/**
+ * 判断某灯具类型是否投阴影（纯函数，供单测）。
+ * 未在集合内的类型（pendant / sconce / floor / table / linear / cove）都不投。
+ */
+export function fixtureCastsShadow(type: string): boolean {
+  return SHADOW_CASTING_FIXTURE_TYPES.has(type);
+}
 
 /**
  * 灯罩发光强度满量程系数（P8b）。emissiveIntensity = clamp(level,0,1) * 该值
@@ -301,11 +326,14 @@ export function buildLightFromFixture(f: Fixture): LightBuildResult {
     case 'table': {
       // 全向点光源：吊灯 / 壁灯 / 落地灯 / 台灯。
       // decay 2 = 物理平方反比衰减；台灯距离更短（近距离照明）。
+      // P9 阴影预算：不投阴影（立方体贴图 6 面/盏，成本高、视觉收益低）。
       const distance = f.type === 'table' ? POINT_DISTANCE * 0.6 : POINT_DISTANCE;
       const point = new PointLight(color, candela, distance, 2);
       point.position.set(fx, fy, fz);
-      point.castShadow = true;
-      point.shadow.mapSize.set(POINT_SHADOW_MAP_SIZE, POINT_SHADOW_MAP_SIZE);
+      point.castShadow = fixtureCastsShadow(f.type);
+      if (point.castShadow) {
+        point.shadow.mapSize.set(POINT_SHADOW_MAP_SIZE, POINT_SHADOW_MAP_SIZE);
+      }
       group.add(point);
       light = point;
       break;
@@ -329,10 +357,10 @@ export function buildLightFromFixture(f: Fixture): LightBuildResult {
 
     default: {
       // 兜底：任何未显式映射的类型用 PointLight，保证场景不会缺一盏灯。
+      // P9 阴影预算：兜底点光源也不投阴影（立方体贴图 6 面/盏，成本高、视觉收益低）。
       const point = new PointLight(color, candela, POINT_DISTANCE, 2);
       point.position.set(fx, fy, fz);
-      point.castShadow = true;
-      point.shadow.mapSize.set(POINT_SHADOW_MAP_SIZE, POINT_SHADOW_MAP_SIZE);
+      point.castShadow = fixtureCastsShadow(f.type);
       group.add(point);
       light = point;
       break;

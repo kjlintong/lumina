@@ -36,9 +36,9 @@ import type { GodraysSettings } from './godrays.js';
 
 /** Bloom 配置参数 */
 export interface BloomConfig {
-  /** 光晕强度（0-2），默认 0.35（微妙光晕，不喧宾夺主） */
+  /** 光晕强度（0-2），默认 0.22（P9 从 0.35 收敛：不再把整面窗洞糊白） */
   strength?: number;
-  /** 光晕半径（0-1），默认 0.4（紧凑聚焦） */
+  /** 光晕半径（0-1），默认 0.3（P9 从 0.4 收敛） */
   radius?: number;
   /** 亮度阈值（0-1），默认 0.85（仅最亮区域发光） */
   threshold?: number;
@@ -87,8 +87,11 @@ export class PostProcessing {
 
     this.bloomPass = new UnrealBloomPass(
       new Vector2(),
-      config.strength ?? 0.35,
-      config.radius ?? 0.4,
+      // P9 交付物 4：strength 0.35 → 0.22、radius 0.4 → 0.3。
+      // 旧值配合 1.4m 太阳圆盘会让 bloom 把整面窗洞糊成白光；
+      // 收敛后太阳圆盘与灯罩仍被抓到（threshold 0.85 保留），但不蔓延全屏。
+      config.strength ?? 0.22,
+      config.radius ?? 0.3,
       config.threshold ?? 0.85,
     );
 
@@ -106,8 +109,18 @@ export class PostProcessing {
   /**
    * 渲染一帧。
    *
-   * GodraysPass 启用时：先渲染场景到带深度 RT → 传递深度纹理 → composer.render()。
-   * 禁用时：直接 composer.render()，零额外开销。
+   * P9 性能：godrays 深度走**独立的半分辨率 godraysRT**，不再用 composer RT。
+   *
+   * 旧实现的问题不是「双渲染」本身，而是 godraysRT 用**全分辨率** +
+   * `UnsignedShortType` 渲染一次完整场景（含全部阴影贴图），
+   * 叠加 composer 那次渲染，是 5 FPS 的主要来源之一。
+   * 现在把 godraysRT 降到半分辨率：深度采样精度对体积光足够，
+   * 但渲染代价降到约 1/4。
+   *
+   * 为什么不用 composer.renderTarget1.depthTexture：标准
+   * WebGLRenderTarget 只有 depth buffer（供 Z 测试），没有
+   * `depthTexture` 附件；要暴露深度必须显式挂 `DepthTexture`
+   * 并处理 MSAA resolve，成本高于半分辨率方案，见交付物 3 兜底选择。
    */
   render(scene: Scene, camera: Camera): void {
     this.renderPass.scene = scene;
@@ -186,14 +199,26 @@ export class PostProcessing {
     return { ...this._godraysSettings };
   }
 
-  /** 创建（或重建）Godrays 深度 RT */
+  /** 创建（或重建）Godrays 深度 RT。
+   *
+   * P9 交付物 3 **兜底路径**：RT 与 DepthTexture 都用**半分辨率**
+   * （`width/2 × height/2`）。
+   *
+   * 选这条路的原因：复用 composer RT 深度需要给标准 WebGLRenderTarget 显式挂
+   * `depthTexture` 附件并处理 MSAA resolve —— 标准 RT 只有 depth buffer（供 Z
+   * 测试），没有可采样的 `depthTexture`。这条改造成本高、坑多（MSAA resolve
+   * 时序、pass 顺序耦合），而半分辨率对 godrays 的深度采样精度足够
+   * （体积光本身是低频信号），渲染代价降到约 1/4。见规格交付物 3。
+   */
   private _recreateGodraysRT(width: number, height: number): void {
     this.godraysRT?.dispose();
-    this.godraysRT = new WebGLRenderTarget(width, height, {
+    const w = Math.max(1, Math.floor(width / 2));
+    const h = Math.max(1, Math.floor(height / 2));
+    this.godraysRT = new WebGLRenderTarget(w, h, {
       type: UnsignedShortType,
       depthBuffer: true,
       stencilBuffer: false,
-      depthTexture: new DepthTexture(width, height, UnsignedShortType),
+      depthTexture: new DepthTexture(w, h, UnsignedShortType),
     });
   }
 

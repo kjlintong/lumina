@@ -34,7 +34,7 @@ describe('DEFAULT_GODRAYS', () => {
       decay: 2.0,
       weight: 1.0,
       screenRadius: 1.0,
-      sampleCount: 24,
+      sampleCount: 16,
       enabled: true,
     });
   });

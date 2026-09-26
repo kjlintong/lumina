@@ -259,9 +259,10 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
   const {
     WebGLRenderer,
     ACESFilmicToneMapping,
+    NoToneMapping,
     PCFSoftShadowMap,
     WebGLRenderTarget,
-    UnsignedByteType,
+    HalfFloatType,
   } = await import('three');
   const webglRenderer = new WebGLRenderer({
     canvas,
@@ -280,8 +281,10 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
   const enablePost = options.enablePostProcessing ?? true;
   const postProcessing = enablePost
     ? new PostProcessing(webglRenderer, {
-        strength: 0.35,
-        radius: 0.4,
+        // P9 交付物 4：与 PostProcessing 构造器默认值同步（0.22 / 0.3 / 0.85）。
+        // 旧 0.35 / 0.4 配合 1.4m 太阳圆盘把整面窗洞糊白。
+        strength: 0.22,
+        radius: 0.3,
         threshold: 0.85,
       })
     : null;
@@ -297,13 +300,19 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
   // 自动曝光采样：渲染到 16×16 临时 RT 后 readRenderTargetPixels 回读。
   // 16×16 = 256 像素，足够代表全屏平均亮度，单次回读代价可忽略。
   // 不启用深度/模板缓冲（亮度采样不需要，省带宽）。
+  //
+  // P9 根因 A：RT 用 HalfFloatType（HDR）而不是 UnsignedByteType ——
+  // 8-bit 会把暗部 clamp 成 0 字节，且与输出链的色彩空间不一致，
+  // 导致 averageLuminanceFromRGBA 恒返回 0、自动曝光整条链路死掉。
+  // HalfFloat 保留暗部细节；采样时临时关闭色调映射（见下方 getAverageLuminance），
+  // 回读到的是线性 HDR 值，符合本模块注释里「线性空间」的约定。
   const SAMPLE_SIZE = 16;
   const sampleRT = new WebGLRenderTarget(SAMPLE_SIZE, SAMPLE_SIZE, {
-    type: UnsignedByteType,
+    type: HalfFloatType,
     depthBuffer: false,
     stencilBuffer: false,
   });
-  const sampleBuffer = new Uint8Array(SAMPLE_SIZE * SAMPLE_SIZE * 4);
+  const sampleBuffer = new Uint16Array(SAMPLE_SIZE * SAMPLE_SIZE * 4);
 
   // 缓存最近一次 render 的 scene/camera，供采样时二次渲染到 RT
   let lastScene: Scene | null = null;
@@ -337,8 +346,14 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
     getToneMappingExposure: () => webglRenderer.toneMappingExposure,
     getAverageLuminance: () => {
       if (!lastScene || !lastCamera) return 0;
-      // 渲染当前场景到 16×16 RT（暴露当前色调映射 + 曝光，
-      // 因此采样值是「用户视角看到的画面亮度」，不是后处理前线性值）
+      // 渲染当前场景到 16×16 RT 后回读。
+      // P9 根因 A 关键修复：**采样期间临时关闭色调映射**。
+      // 采样 RT 是 HalfFloatType（HDR），我们要的是**线性 HDR 值**，
+      // 若 ACES 仍在生效，返回的是已被压亮的显示色，会污染曝光反馈环路。
+      // 采样完立即还原，不影响正常渲染与后处理链。
+      const prevToneMapping = webglRenderer.toneMapping;
+      const prevTarget = webglRenderer.getRenderTarget();
+      webglRenderer.toneMapping = NoToneMapping;
       webglRenderer.setRenderTarget(sampleRT);
       webglRenderer.render(lastScene, lastCamera);
       webglRenderer.readRenderTargetPixels(
@@ -349,7 +364,8 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
         SAMPLE_SIZE,
         sampleBuffer,
       );
-      webglRenderer.setRenderTarget(null);
+      webglRenderer.setRenderTarget(prevTarget);
+      webglRenderer.toneMapping = prevToneMapping;
       return averageLuminanceFromRGBA(sampleBuffer);
     },
     setShadows: (enabled: boolean) => {

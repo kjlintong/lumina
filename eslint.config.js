@@ -50,6 +50,9 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['dist/', 'node_modules/', 'build/'],
+    // TEMP-DEBUG (P9)：dev-debug.ts 是浏览器控制台调试钩子，临时文件，
+    // 内部大量 `any`（类型检查规则会报 100+ 个 no-unsafe-* error）。
+    // tsconfig 已 exclude；eslint 一并忽略。P9 完成后与本文件一并删除。
+    ignores: ['dist/', 'node_modules/', 'build/', 'src/dev-debug.ts'],
   },
 );
