@@ -38,23 +38,33 @@ export interface TimeAxisProps {
 ```
 
 实现要点：
-- 范围 **16:00 → 21:00**（产品主场景：日落到夜晚）。
+- 范围 **0:00 → 24:00（全天）**。
+  注：初版设计为 16:00 → 21:00（产品主场景：日落到夜晚），但用户验收后
+  改为全天 24 小时，所以 `AXIS_MIN = 0`、`AXIS_MAX = 24`。引擎侧本来
+  就支持 0..24（`setHour` 钳位 + `tick` 内 `timeHour -= 24` 回环），
+  `solarPosition` 按天文高度角处理夜晚，不需要改渲染侧。
 - 轨道：`<div>` + `background: linear-gradient(90deg, ...)`，
-  颜色键按虚拟时间从 16:00（`#ffcc66`）→ 17:30（`#ff8a3a`）
-  → 18:45（`#c44a2a`）→ 20:00（`#5a4a8a`）→ 21:00（`#2a2a5a`）。
+  颜色键按虚拟时间走一整个昼夜：午夜 `#1a1a3e` → 黎明 `#2a2a5e`
+  → 日出 `#ff9040` → 正午 `#ffd24a` → 黄昏 `#c44a2a`
+  → 入夜 `#5a4a8a` → 午夜 `#1a1a3e`（首尾一致，形成闭合回环）。
 - 手柄：绝对定位的 `<div>`（圆形 16px，`background: radial-gradient(...)`，
   `box-shadow: 0 0 12px 3px rgba(255,200,120,0.6)`）。
 - **交互**：轨道支持 `pointerdown` + `pointermove`（拖拽），
   把手柄位置转成 hour；**不要**用原生 `<input type="range">` 做主轨道
   （视觉不可定制），但可以在轨道上叠一个透明的原生 range 做可访问性兜底，
   或者用 role="slider" + aria 属性手做键盘支持。**必须**支持键盘左右键调节。
-- 刻度：轨道下方 6 个小刻度标签（16/17/18/19/20/21），`font-size: 10px; color: #888`。
+- 刻度：轨道下方 13 个小刻度标签（每 2 小时：0/2/4/.../24），
+  `font-size: 10px; color: #888`。
+  注：24 小时逐小时刻度的话 25 个标签在轨道宽度内会挤成一团，
+  所以步长取 2 小时。
 - 左端药丸：`border-radius: 999px; background: rgba(20,20,30,0.9); padding: 4px 12px`，
   显示 `HH:MM`（从 hour 格式化的 `formatHour`，App.tsx 已有该函数，可导出复用）。
+  注：`hour = 24` 时显示 `24:00`，这是合法的（formatHour 不做 24→0 归一化）。
 - 速度滑杆与阴影开关保留在同一行右侧（缩小、低调），不要抢时间轴风头。
 
-单测：TimeAxis 渲染出轨道、6 个刻度、药丸；拖动（`fireEvent` pointer 序列）
-会调用 `onHourChange` 且值在 [16, 21] 内；`onHourChange` 的 hour 值能被
+单测：TimeAxis 渲染出轨道、13 个刻度、药丸；`hourToRatio` 在 0..24 区间
+正确换算并钳位；`trackGradient` 含 7 个颜色键且首尾闭合；手柄 `role="slider"`
++ `aria-valuemin=0` / `aria-valuemax=24`；键盘左右键钳在 [0, 24]；
 `formatHour` 正确格式化。
 
 ### 交付物 2：真实数字 HUD `src/ui/panels/HudStats.tsx`（新建）
