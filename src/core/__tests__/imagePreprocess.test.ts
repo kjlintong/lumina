@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { toGrayscale, binarize, detectLines, preprocessForCalibration } from '../imagePreprocess.js';
+import {
+  toGrayscale,
+  binarize,
+  detectLines,
+  preprocessForCalibration,
+  otsuThreshold,
+  sobelEdges,
+  houghLines,
+} from '../imagePreprocess.js';
 
 describe('imagePreprocess', () => {
   it('toGrayscale outputs correct gray values', () => {
@@ -79,5 +87,84 @@ describe('imagePreprocess', () => {
     expect(result.binary).toBeDefined();
     expect(result.gray.length).toBe(3);
     expect(result.binary.length).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P25: Otsu / Sobel / Hough
+// ---------------------------------------------------------------------------
+
+describe('imagePreprocess (P25)', () => {
+  describe('otsuThreshold', () => {
+    it('空数组 → 默认 128', () => {
+      const gray = new Uint8ClampedArray(0);
+      expect(otsuThreshold(gray)).toBe(128);
+    });
+
+    it('双峰分布 → 阈值在两峰之间', () => {
+      const gray = new Uint8ClampedArray(200);
+      for (let i = 0; i < 100; i++) gray[i] = 50;
+      for (let i = 100; i < 200; i++) gray[i] = 200;
+      const threshold = otsuThreshold(gray);
+      expect(threshold).toBeGreaterThanOrEqual(50);
+      expect(threshold).toBeLessThan(200);
+    });
+
+    it('纯白 → 阈值在 0-255 范围内', () => {
+      const gray = new Uint8ClampedArray(100);
+      gray.fill(255);
+      const threshold = otsuThreshold(gray);
+      expect(threshold).toBeGreaterThanOrEqual(0);
+      expect(threshold).toBeLessThanOrEqual(255);
+    });
+  });
+
+  describe('sobelEdges', () => {
+    it('均匀图像 → 边缘强度全 0', () => {
+      const gray = new Uint8ClampedArray(9).fill(128);
+      const edges = sobelEdges(gray, 3, 3);
+      for (let i = 0; i < edges.length; i++) {
+        expect(edges[i]).toBe(0);
+      }
+    });
+
+    it('垂直边缘 → 中间列有边缘强度', () => {
+      const gray = new Uint8ClampedArray(12);
+      gray.set([255, 255, 0, 255, 255, 0, 255, 255, 0], 0);
+      const edges = sobelEdges(gray, 3, 4);
+      expect(edges[1 * 3 + 1]).toBeGreaterThan(0);
+    });
+
+    it('空图像 → 空数组', () => {
+      const edges = sobelEdges(new Uint8ClampedArray(0), 0, 0);
+      expect(edges.length).toBe(0);
+    });
+  });
+
+  describe('houghLines', () => {
+    it('空图像 → 空数组', () => {
+      const lines = houghLines(new Uint8ClampedArray(0), 0, 0);
+      expect(lines.length).toBe(0);
+    });
+
+    it('全黑图像 → 无线段', () => {
+      const edges = new Uint8ClampedArray(100).fill(0);
+      const lines = houghLines(edges, 10, 10);
+      expect(lines.length).toBe(0);
+    });
+
+    it('返回 HoughLine 结构', () => {
+      const edges = new Uint8ClampedArray(400).fill(255);
+      const lines = houghLines(edges, 20, 20, { threshold: 10, minSegmentLength: 10 });
+      for (const line of lines) {
+        expect(line).toHaveProperty('x1');
+        expect(line).toHaveProperty('y1');
+        expect(line).toHaveProperty('x2');
+        expect(line).toHaveProperty('y2');
+        expect(line).toHaveProperty('length');
+        expect(line).toHaveProperty('angle');
+        expect(line).toHaveProperty('votes');
+      }
+    });
   });
 });

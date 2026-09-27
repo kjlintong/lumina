@@ -102,6 +102,7 @@ interface ModelingState {
   addCalibrationPoint: (x: number, y: number) => void;
   confirmCalibration: (realDistance: number, unit: LengthUnit) => void;
   resetCalibration: () => void;
+  applyExtractResult: (model: ModelGeometry) => void;
   undo: () => void;
   redo: () => void;
   canUndo: () => boolean;
@@ -302,6 +303,11 @@ export const useModelingStore = create<ModelingState>()(
 
     resetCalibration: () => {
       set({ calibrationPoints: [], calibrationError: null });
+    },
+
+    applyExtractResult: (model) => {
+      set({ model, selectedTemplateId: null, isCalibrating: false });
+      syncToProjectStore();
     },
 
     undo: () => {

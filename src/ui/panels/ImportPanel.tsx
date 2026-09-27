@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useModelingStore } from '../../store/modelingStore.js';
 import type { LengthUnit } from '../../core/scale.js';
 import { describeImporter } from '../../core/importers.js';
+import { extractWalls } from '../../core/wallExtractor.js';
+import type { ExtractResult } from '../../core/wallExtractor.js';
 
 const UNIT_OPTIONS: { value: LengthUnit; label: string }[] = [
   { value: 'm', label: '米 (m)' },
@@ -33,12 +35,36 @@ export function ImportPanel() {
     addCalibrationPoint,
     confirmCalibration,
     resetCalibration,
+    applyExtractResult,
   } = useModelingStore();
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [realDistance, setRealDistance] = useState('3');
   const [unit, setUnit] = useState<LengthUnit>('m');
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [extractResult, setExtractResult] = useState<ExtractResult | null>(null);
+  const [extractError, setExtractError] = useState<string | null>(null);
+
+  // 标定后可自动提取墙体
+  const model = useModelingStore((s) => s.model);
+  const canExtract = model.calibration !== null && !extracting;
+
+  const handleAutoExtract = async () => {
+    if (importedImage === null || model.calibration === null) return;
+    setExtracting(true);
+    setExtractError(null);
+    setExtractResult(null);
+    try {
+      const result = await extractWalls(importedImage, model.calibration);
+      applyExtractResult(result.model);
+      setExtractResult(result);
+    } catch (e) {
+      setExtractError(e instanceof Error ? e.message : '提取失败');
+    } finally {
+      setExtracting(false);
+    }
+  };
 
   // ImageBitmap → object URL
   useEffect(() => {
@@ -292,6 +318,38 @@ export function ImportPanel() {
           >
             重置
           </button>
+        </div>
+      )}
+      {/* P25: 自动提取（标定后可用） */}
+      {!isCalibrating && canExtract && (
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={handleAutoExtract}
+            disabled={extracting}
+            style={{
+              padding: '4px 10px',
+              fontSize: 11,
+              cursor: extracting ? 'not-allowed' : 'pointer',
+              border: '1px solid rgba(100,180,255,0.4)',
+              borderRadius: 4,
+              background: extracting ? 'rgba(255,255,255,0.03)' : 'rgba(100,180,255,0.15)',
+              color: '#70b8ff',
+              fontWeight: 600,
+            }}
+          >
+            {extracting ? '提取中…' : '⚡ 自动提取墙体'}
+          </button>
+          {extractResult !== null && (
+            <span style={{ fontSize: 10, color: '#60c060' }}>
+              ✓ {extractResult.stats.walls} 墙 / {extractResult.stats.rooms} 房
+            </span>
+          )}
+          {extractError !== null && (
+            <span style={{ fontSize: 10, color: '#e06060' }}>
+              {extractError}
+            </span>
+          )}
         </div>
       )}
     </div>
