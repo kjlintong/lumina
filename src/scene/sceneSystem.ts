@@ -73,6 +73,7 @@ export const PRESET_SCENES: Record<PresetSceneKey, SceneDefinition> = {
     transitionMs: 1200,
     levels: { [ALL_FIXTURES]: 0.9 },
     cct: { [ALL_FIXTURES]: 5500 },
+    exposure: 1.0, // §5 日间 12:00
   },
   dinner: {
     key: 'dinner',
@@ -80,6 +81,7 @@ export const PRESET_SCENES: Record<PresetSceneKey, SceneDefinition> = {
     transitionMs: 1500,
     levels: { [ALL_FIXTURES]: 0.65 },
     cct: { [ALL_FIXTURES]: 2400 },
+    exposure: 0.8, // §5 晚餐 19:00
   },
   movie: {
     key: 'movie',
@@ -87,6 +89,7 @@ export const PRESET_SCENES: Record<PresetSceneKey, SceneDefinition> = {
     transitionMs: 2000,
     levels: { [ALL_FIXTURES]: 0.15 },
     cct: { [ALL_FIXTURES]: 2200 },
+    exposure: 0.65, // §5 观影 21:00
   },
   relax: {
     key: 'relax',
@@ -94,6 +97,7 @@ export const PRESET_SCENES: Record<PresetSceneKey, SceneDefinition> = {
     transitionMs: 1800,
     levels: { [ALL_FIXTURES]: 0.4 },
     cct: { [ALL_FIXTURES]: 2400 },
+    exposure: 0.72, // §5 无此场景；取 dinner(0.8) 与 movie(0.65) 的中间态
   },
   reading: {
     key: 'reading',
@@ -101,6 +105,7 @@ export const PRESET_SCENES: Record<PresetSceneKey, SceneDefinition> = {
     transitionMs: 900,
     levels: { [ALL_FIXTURES]: 0.95 },
     cct: { [ALL_FIXTURES]: 2900 },
+    exposure: 0.9, // §5 阅读
   },
   night: {
     key: 'night',
@@ -108,6 +113,7 @@ export const PRESET_SCENES: Record<PresetSceneKey, SceneDefinition> = {
     transitionMs: 1000,
     levels: { [ALL_FIXTURES]: 0.1 },
     cct: { [ALL_FIXTURES]: 2200 },
+    exposure: 0.55, // §5 起夜 02:00
   },
 };
 
@@ -229,9 +235,8 @@ function clampCct(f: Fixture, target: number): number {
 /** 防御性拷贝：SceneDefinition 的 levels/cct 是可变 Record，绝不外泄内部引用 */
 function cloneScene(scene: SceneDefinition): SceneDefinition {
   return {
-    key: scene.key,
-    name: scene.name,
-    transitionMs: scene.transitionMs,
+    // 先整体浅拷贝（含 exposure 等标量字段），再覆写两个可变 Record。
+    ...scene,
     levels: { ...scene.levels },
     cct: { ...scene.cct },
   };

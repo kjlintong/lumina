@@ -54,6 +54,7 @@ import { buildLightShaft } from '../render/volumetricShaft.js';
 import { buildPlanter, buildPlant } from '../render/plants.js';
 import { AutoExposure } from '../render/autoExposure.js';
 import { bloomForSunIntensity } from '../render/postProcessing.js';
+import { presetExposureBySceneKey } from '../render/sceneExposure.js';
 import { solarColor, solarPosition } from './solar.js';
 import { cameraPresetByKey, easeInOutQuad, lerp } from './cameraPresets.js';
 
@@ -857,7 +858,21 @@ export class SceneEngine {
     //   - 过渡：线性插值
     // AutoExposure 类保留（未来可能恢复），但 update() 不再被每帧调用。
     const nightFactor = clamp01((0.2 - this.sunLight.intensity) / 0.15); // 0（白天）→ 1（夜晚）
-    const targetExposure = 1.0 - nightFactor * 0.5; // 1.0 → 0.5
+    const sunExposure = 1.0 - nightFactor * 0.5; // 1.0 → 0.5
+
+    // ---- P20：场景预设曝光优先（§5 曝光矩阵）----
+    // 有激活场景预设且它声明了 exposure 时，用它覆盖太阳分档。
+    // 语义：用户选了「观影」就是想看暗场，不该因为太阳还在 0.85。
+    // 无激活场景（用户手动调灯）时回落 P9b 太阳分档，保持昼夜连续过渡。
+    // 注意：这里是**覆盖**不是**替换** —— P9b 的太阳分档公式原样保留，
+    // 作为 fallback 与手动调灯时的曝光源。
+    let targetExposure: number;
+    if (this.activeSceneKey) {
+      const presetExposure = presetExposureBySceneKey(this.activeSceneKey);
+      targetExposure = presetExposure ?? sunExposure;
+    } else {
+      targetExposure = sunExposure;
+    }
     this.backend.setToneMappingExposure(targetExposure);
 
     // ---- P16：Bloom 按太阳高度分档（审查报告 §4 Day 4 h）----

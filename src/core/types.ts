@@ -246,4 +246,13 @@ export interface SceneDefinition {
   levels: Record<string, number>;
   /** fixtureId -> 目标色温 K */
   cct: Record<string, number>;
+  /**
+   * 场景预设曝光（§5 曝光矩阵）。**可选**：未定义时引擎回落到按太阳
+   * 强度的分档曝光（P9b）。
+   *
+   * 语义是「用户选了某个场景意图」时锁定的 toneMappingExposure，
+   * 优先级高于太阳分档。日落等**无对应预设**的时刻仍由太阳分档驱动，
+   * 二者不冲突。
+   */
+  exposure?: number;
 }

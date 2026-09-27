@@ -471,4 +471,51 @@ describe('SceneEngine', () => {
       expect(noExposure).toBeDefined();
     });
   });
+
+  describe('场景预设曝光（P20，§5 曝光矩阵）', () => {
+    // setActiveScene 只存 key 不触发重算，所以必须在它之后调 setHour
+    // 才能驱动 updateSunPosition() 重算曝光。
+    it('激活 reading 场景时曝光为 0.9（覆盖太阳分档）', () => {
+      const engine = new SceneEngine(backend);
+      engine.setHour(12); // 正午太阳，太阳分档给 ~1.0
+      engine.setActiveScene('reading');
+      engine.setHour(12.25); // setActiveScene 只存 key，需再触发一帧重算
+      expect(
+        (backend.setToneMappingExposure as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0],
+      ).toBeCloseTo(0.9);
+    });
+
+    it('无激活场景时回落太阳分档（正午 = 1.0）', () => {
+      const engine = new SceneEngine(backend);
+      engine.setActiveScene(null);
+      engine.setHour(12);
+      expect(
+        (backend.setToneMappingExposure as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0],
+      ).toBeCloseTo(1.0);
+    });
+
+    it('夜间太阳 + 激活 night 场景 → 0.55 而非太阳分档的 0.5', () => {
+      const engine = new SceneEngine(backend);
+      engine.setHour(2); // 深夜太阳，太阳分档给 0.5
+      engine.setActiveScene('night');
+      engine.setHour(2.5); // 仍需重算才能应用预设曝光
+      expect(
+        (backend.setToneMappingExposure as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0],
+      ).toBeCloseTo(0.55);
+    });
+
+    it('setActiveScene(null) 后恢复太阳分档', () => {
+      const engine = new SceneEngine(backend);
+      engine.setActiveScene('movie');
+      engine.setHour(12); // 正午，太阳分档本会给 ~1.0，预设覆盖为 0.65
+      expect(
+        (backend.setToneMappingExposure as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0],
+      ).toBeCloseTo(0.65);
+      engine.setActiveScene(null);
+      engine.setHour(12.25); // 无激活场景，回落太阳分档
+      expect(
+        (backend.setToneMappingExposure as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0],
+      ).toBeCloseTo(1.0);
+    });
+  });
 });
