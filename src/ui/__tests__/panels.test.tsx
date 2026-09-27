@@ -195,4 +195,27 @@ describe('ZonePanel', () => {
     fireEvent.click(firstMeta);
     expect(state().selectedZoneKey).toBe(z.key);
   });
+
+  it('未开专业模式时不渲染 lux 文本（P24-a：C 端不靠 lux 绝对值）', () => {
+    render(<ZonePanel />);
+    const metas = screen.getAllByText(/工作面/);
+    expect(metas.length).toBeGreaterThan(0);
+    for (const el of metas) {
+      expect(el.textContent).not.toMatch(/lx/);
+      expect(el.textContent).not.toContain('目标');
+    }
+  });
+
+  it('开专业模式（professional=true）时行内渲染「目标 … lx」', () => {
+    render(<ZonePanel professional />);
+    const zones = Object.values(state().project.zones);
+    expect(zones.length).toBeGreaterThan(0);
+    for (const z of zones) {
+      const metas = screen.getAllByText(/工作面/);
+      const hit = metas.find((el) =>
+        (el.textContent ?? '').includes(`目标 ${z.lux} lx`),
+      );
+      expect(hit, `zone ${z.key} lux 行未渲染`).toBeDefined();
+    }
+  });
 });

@@ -269,7 +269,9 @@ export function RenderPanel({
         </label>
       </div>
 
-      {/* 项目管理 */}
+      {/* 项目管理：方案名称 + 重置示例。
+          JSON 导入/导出属于开发者工具，移到下方「开发者」折叠区（P24-a），
+          避免专业模式开启后与渲染调参混在同一面板。 */}
       <div className="field-group">
         <div className="field-group-title">项目管理</div>
         <div className="field">
@@ -281,6 +283,13 @@ export function RenderPanel({
             onChange={(e) => useProjectStore.setState({ project: { ...project, name: e.target.value } })}
           />
         </div>
+        <button type="button" className="btn btn-danger" onClick={handleReset}>
+          重置为示例方案
+        </button>
+      </div>
+
+      {/* 开发者（P24-a）：JSON 导入导出独立折叠区，默认收起。 */}
+      <Panel title="开发者" defaultOpen={false}>
         <div className="panel-row">
           <button type="button" className="btn" onClick={handleExport}>
             导出 JSON
@@ -296,10 +305,7 @@ export function RenderPanel({
             style={{ display: 'none' }}
           />
         </div>
-        <button type="button" className="btn btn-danger" onClick={handleReset}>
-          重置为示例方案
-        </button>
-      </div>
+      </Panel>
     </Panel>
   );
 }

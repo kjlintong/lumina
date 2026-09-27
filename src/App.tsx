@@ -564,7 +564,7 @@ export default function App() {
             <ModelPanel />
             <ModelPlan />
             <ModelCanvas />
-            <ZonePanel />
+            <ZonePanel professional={professional} />
             {professional && <FixturePanel />}
           </div>
         )}

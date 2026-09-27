@@ -18,7 +18,12 @@ function typeLabel(type: ActivityZoneType): string {
   return ZONE_TYPE_TEMPLATES[type]?.label ?? type;
 }
 
-export function ZonePanel() {
+interface ZonePanelProps {
+  /** 专业模式：开启后行内显示目标照度（lux 绝对值）；默认 false，C 端不展示 */
+  professional?: boolean;
+}
+
+export function ZonePanel({ professional = false }: ZonePanelProps) {
   const zones = useProjectStore((s) => s.project.zones);
   const selectedZoneKey = useProjectStore((s) => s.selectedZoneKey);
   const addZone = useProjectStore((s) => s.addZone);
@@ -84,7 +89,7 @@ export function ZonePanel() {
               </button>
             </div>
             <div className="item-meta">
-              {typeLabel(z.type)} · 工作面 {z.planeH.toFixed(2)}m · 目标 {z.lux} lx
+              {typeLabel(z.type)} · 工作面 {z.planeH.toFixed(2)}m{professional ? ` · 目标 ${z.lux} lx` : ''}
             </div>
           </li>
         ))}
