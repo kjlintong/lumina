@@ -43,11 +43,14 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { ActivityZone, Fixture } from '../core/types.js';
 import type { RenderBackend } from '../render/backend.js';
+import type { ModelGeometry } from '../core/modeling.js';
 import { buildActivityZone } from '../render/activityZone.js';
 import { buildDustParticles, updateDustPoints } from '../render/dustParticles.js';
 import { buildFurniture } from '../render/furniture.js';
 import { buildLightFromFixture, cctToRGB, SHADE_EMISSIVE_SCALE } from '../render/lightBuilder.js';
 import { buildRoom } from '../render/room.js';
+import { buildModelRoom } from '../render/modelRoomBuilder.js';
+import { modelToRoomDims } from '../render/modelPlanLayout.js';
 import { buildSkyScene, setSkyBackdropColors, skyColors } from '../render/sky.js';
 import { buildSkyline } from '../render/skyline.js';
 import { buildLightShaft } from '../render/volumetricShaft.js';
@@ -602,6 +605,121 @@ export class SceneEngine {
 
     // 新绿植
     this.decorPlants = this.buildDecorPlants(width, depth);
+    this.scene.add(this.decorPlants);
+    this._decorRef = this.decorPlants;
+
+    // 更新太阳位置
+    this.updateSunPosition();
+  }
+
+  /**
+   * 从 ModelGeometry 重建房间（P23 §4）。
+   *
+   * 与 `rebuildRoom(w, d, h)` 的区别：
+   * 后者用 `buildRoom` 生成标准矩形房间；
+   * 本方法用 `buildModelRoom` 从 walls[] / openings[] / rooms[] 挤出几何体。
+   *
+   * 无 model（空画布）时调用方应先检查 walls.length > 0 再调用。
+   */
+  rebuildFromModel(model: ModelGeometry): void {
+    // 移除旧房间
+    if (this.roomGroup !== null) {
+      this.scene.remove(this.roomGroup);
+      this.roomGroup = null;
+    }
+    // 移除旧天空场景
+    if (this.skyGroup !== null) {
+      this.scene.remove(this.skyGroup);
+      this.skyGroup = null;
+      this.skySun = null;
+      this.skySunMat = null;
+      this.skyBackdrop = null;
+      this.skyline = null;
+    }
+    // 移除旧尘埃粒子
+    if (this._dustRef !== null) {
+      this.scene.remove(this._dustRef);
+      this._dustRef = null;
+      this.dustPoints = null;
+    }
+    // 移除旧绿植
+    if (this._decorRef !== null) {
+      this.scene.remove(this._decorRef);
+      this._decorRef = null;
+      this.decorPlants = null;
+    }
+    // 移除旧光柱
+    if (this.lightShaft !== null) {
+      this.scene.remove(this.lightShaft);
+      this.lightShaft = null;
+    }
+    if (this.lightShaftCross !== null) {
+      this.scene.remove(this.lightShaftCross);
+      this.lightShaftCross = null;
+    }
+
+    // 用 buildModelRoom 构建
+    const group = buildModelRoom(model);
+    this.scene.add(group);
+    this.roomGroup = group;
+
+    // 从 group 中找到第一个窗户玻璃 Mesh，更新 skyOrigin
+    let foundGlass = false;
+    group.traverse((obj) => {
+      if (foundGlass) return;
+      const mesh = obj as Mesh & { material: { transmission?: number } };
+      if (mesh.isMesh && mesh.material.transmission === 1.0) {
+        this.skyOrigin.copy(mesh.position);
+        this.windowGlass = mesh;
+        foundGlass = true;
+      }
+    });
+    // 没找到玻璃时保持旧 skyOrigin（不破坏太阳位置）
+
+    // 计算包围盒尺寸（用于 dust/shafts/decor 位置）
+    const dims = modelToRoomDims(model);
+    const w = dims?.width ?? 6;
+    const d = dims?.depth ?? 4.5;
+    const h = dims?.height ?? 2.8;
+
+    // 新天空场景
+    const sky = buildSkyScene(this.skyOrigin, new Vector3(0, 0, -1));
+    this.skySun = sky.sun;
+    this.skySunMat = sky.sun.material as MeshBasicMaterial;
+    this.skyBackdrop = sky.backdrop;
+    this.scene.add(sky.group);
+    this.skyGroup = sky.group;
+    this.skyline = buildSkyline(new Vector3(0, 0, 0), new Vector3(0, 0, -1));
+    sky.group.add(this.skyline);
+
+    // 新尘埃粒子
+    this.dustPoints = buildDustParticles({
+      count: 350,
+      volumeSize: [w * 0.8, h * 0.75, d * 0.8],
+    });
+    this.dustPoints.position.y = h * 0.5;
+    this.scene.add(this.dustPoints);
+    this._dustRef = this.dustPoints;
+
+    // 新光柱
+    const shaft = buildLightShaft(this.skyOrigin.clone(), new Vector3(0, 0, 0), {
+      opacity: this.shaftBaseOpacity,
+    });
+    shaft.material = (shaft.material as MeshBasicMaterial).clone();
+    const cross = shaft.clone();
+    cross.material = (shaft.material as MeshBasicMaterial).clone();
+    cross.position.copy(shaft.position);
+    cross.quaternion.copy(shaft.quaternion);
+    const quarter = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2);
+    cross.quaternion.multiply(quarter);
+    (cross.material as MeshBasicMaterial).color.setHex(0xff9a4d);
+    this.lightShaft = shaft;
+    this.lightShaftCross = cross;
+    this.scene.add(shaft);
+    this.scene.add(cross);
+
+    // 新绿植
+    this.decorPlants = this.buildDecorPlants(w, d);
     this.scene.add(this.decorPlants);
     this._decorRef = this.decorPlants;
 

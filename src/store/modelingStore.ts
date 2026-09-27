@@ -6,6 +6,8 @@ import { DEFAULT_WALL_THICKNESS, MODEL_SCHEMA_ID } from '../core/modeling.js';
 import type { RoomPolygon, WallSegment } from '../core/modeling.js';
 import { UndoStack, applyUserEdit } from '../core/confidence.js';
 import { HOUSE_TEMPLATES, getTemplate } from '../core/templates.js';
+import { calibrate, confirmScale } from '../core/scale.js';
+import type { LengthUnit } from '../core/scale.js';
 import { useProjectStore } from './projectStore.js';
 
 enableMapSet();
@@ -79,6 +81,13 @@ interface ModelingState {
   orthoSnap: boolean;
   isDrawing: boolean;
 
+  // P23：上传与标定
+  importedImage: ImageBitmap | null;
+  importImageName: string | null;
+  calibrationPoints: [number, number][];
+  isCalibrating: boolean;
+  calibrationError: string | null;
+
   applyTemplate: (id: string) => void;
   clearModel: () => void;
   addPendingVertex: (vertex: [number, number]) => void;
@@ -88,6 +97,11 @@ interface ModelingState {
   setOrthoSnap: (v: boolean) => void;
   startDrawing: () => void;
   stopDrawing: () => void;
+  importImage: (file: File) => void;
+  clearImport: () => void;
+  addCalibrationPoint: (x: number, y: number) => void;
+  confirmCalibration: (realDistance: number, unit: LengthUnit) => void;
+  resetCalibration: () => void;
   undo: () => void;
   redo: () => void;
   canUndo: () => boolean;
@@ -133,6 +147,11 @@ export const useModelingStore = create<ModelingState>()(
     gridSnap: true,
     orthoSnap: true,
     isDrawing: false,
+    importedImage: null,
+    importImageName: null,
+    calibrationPoints: [],
+    isCalibrating: false,
+    calibrationError: null,
 
     applyTemplate: (id) => {
       const t = getTemplate(id);
@@ -206,6 +225,84 @@ export const useModelingStore = create<ModelingState>()(
     setOrthoSnap: (v) => set({ orthoSnap: v }),
     startDrawing: () => set({ isDrawing: true }),
     stopDrawing: () => set({ isDrawing: false }),
+
+    importImage: (file) => {
+      void file.arrayBuffer().then((buf) => {
+        return createImageBitmap(new Blob([buf]));
+      }).then((bitmap) => {
+        set({ importedImage: bitmap, importImageName: file.name, calibrationPoints: [], isCalibrating: true, calibrationError: null });
+      }).catch((err) => {
+        set({ calibrationError: `图片加载失败: ${err instanceof Error ? err.message : String(err)}` });
+      });
+    },
+
+    clearImport: () => {
+      const prev = get().model;
+      const next = emptyModel();
+      undoStack.push({
+        elementId: '__clear_import__',
+        label: '清空导入',
+        before: structuredClone(prev),
+        after: structuredClone(next),
+      });
+      set({
+        importedImage: null,
+        importImageName: null,
+        calibrationPoints: [],
+        isCalibrating: false,
+        calibrationError: null,
+        selectedTemplateId: null,
+        model: next,
+        pendingVertices: [],
+        isDrawing: false,
+      });
+      syncToProjectStore();
+    },
+
+    addCalibrationPoint: (x, y) => {
+      set((s) => {
+        if (s.calibrationPoints.length < 2) {
+          s.calibrationPoints = [...s.calibrationPoints, [x, y]];
+        }
+      });
+    },
+
+    confirmCalibration: (realDistance, unit) => {
+      const { calibrationPoints } = get();
+      if (calibrationPoints.length < 2) return;
+      const p1 = calibrationPoints[0]!;
+      const p2 = calibrationPoints[1]!;
+      const measuredPx = Math.sqrt((p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2);
+
+      let result: ReturnType<typeof calibrate>;
+      try {
+        result = calibrate(measuredPx, realDistance, unit);
+      } catch (e) {
+        set({ calibrationError: e instanceof Error ? e.message : '标定失败' });
+        return;
+      }
+
+      const ok = confirmScale(result);
+      if (!ok) {
+        set({ calibrationError: '标定距离超出合理范围（0.01m–100m）' });
+        return;
+      }
+
+      // 标定成功：挂到 model.calibration
+      const next = structuredClone(get().model);
+      next.calibration = result;
+      next.track = { track: 'scan', guaranteesUniformError: false };
+      set({
+        model: next,
+        isCalibrating: false,
+        calibrationError: null,
+      });
+      syncToProjectStore();
+    },
+
+    resetCalibration: () => {
+      set({ calibrationPoints: [], calibrationError: null });
+    },
 
     undo: () => {
       const entry = undoStack.undo();

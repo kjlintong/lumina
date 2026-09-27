@@ -27,6 +27,7 @@ import { RenderPanel } from './ui/panels/RenderPanel.js';
 import { ModelPanel } from './ui/panels/ModelPanel.js';
 import { ModelPlan } from './ui/panels/ModelPlan.js';
 import { ModelCanvas } from './ui/panels/ModelCanvas.js';
+import { ImportPanel } from './ui/panels/ImportPanel.js';
 import { TimeAxis } from './ui/panels/TimeAxis.js';
 import { FloorPlan } from './ui/panels/FloorPlan.js';
 import { HudStats } from './ui/panels/HudStats.js';
@@ -375,10 +376,14 @@ export default function App() {
           const transitioning = controllerRef.current?.isRunning() ?? false;
           syncFixtures(eng, prev.project.fixtures, state.project.fixtures, transitioning, state.activeSceneKey);
           syncZones(eng, prev.project.zones, state.project.zones, prev.selectedZoneKey, state.selectedZoneKey);
-          // P22 §3.6：房间尺寸随 model 变化而更新
+          // P22 §3.6 + P23 §4：房间尺寸随 model 变化而更新
           if (state.project.model !== prev.project.model && state.project.model !== null && state.project.model !== undefined) {
-            const dims = modelToRoomDims(state.project.model);
-            if (dims !== null) eng.rebuildRoom(dims.width, dims.depth, dims.height);
+            if (state.project.model.walls.length > 0 || state.project.model.rooms.length > 0) {
+              eng.rebuildFromModel(state.project.model);
+            } else {
+              const dims = modelToRoomDims(state.project.model);
+              if (dims !== null) eng.rebuildRoom(dims.width, dims.depth, dims.height);
+            }
           }
           // 自动保存到 localStorage（防抖：只在 project 对象引用变化时保存）
           if (state.project !== prev.project) {
@@ -555,6 +560,7 @@ export default function App() {
         {leftOpen && (
           <div className="sidebar-content">
             <FloorPlan />
+            <ImportPanel />
             <ModelPanel />
             <ModelPlan />
             <ModelCanvas />
