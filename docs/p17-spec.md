@@ -1,39 +1,32 @@
-# P17 规格：阴影策略（审查报告 §4 Day 5）
+# P17 规格：阴影策略（审查报告 §4 Day 5，已按代码核实改写）
 
 ## 目标
 
-按审查报告 §4 Day 5 i「阴影策略」：
-1. 太阳：`castShadow`，**2048×2048**（当前 1024），`shadow.camera` **收紧到房间包围盒**，`bias -0.0005`，`normalBias 0.02`
-2. 人工灯：只给 **1–2 盏重点灯（餐桌吊灯）** 开 shadow，**1024**；其余全关
-3. 兜底：家具底部假接触阴影贴片
+改善太阳阴影的像素密度（清晰度）。
 
-## 已核实的现状
+## ⚠️ 原审查报告前提已被推翻，本规格已改写
 
-- `sceneEngine.ts:96`：`SUN_SHADOW_MAP_SIZE = 1024`（要改 2048）
-- `sceneEngine.ts:332-338`：太阳 shadow camera 是 `±10` 米（太大，房间实际 6×4.5 米）
-- `sceneEngine.ts:352-353`：`bias = -0.0005`（已对），`normalBias = 0.03`（要改 0.02）
-- `lightBuilder.ts:70-73`：`SHADOW_MAP_SIZE = 1024`（SpotLight），`POINT_SHADOW_MAP_SIZE = 512`（PointLight，要改 1024）
-- `lightBuilder.ts:96`：`fixtureCastsShadow(type)` 函数——所有灯都可能开 shadow
-- `lightBuilder.ts:351, 381`：`point.castShadow = fixtureCastsShadow(f.type)`
+原审查报告要求「太阳 1024² → 2048²」「人工灯只给 1–2 盏重点灯开 shadow」。
+**逐条 grep 核实后，这两条前提都不成立**，不要按原报告实现：
 
-## 交付物
+1. **「人工灯 PointLight 都开 shadow = 36 张立方体贴图」是错的**。
+   `lightBuilder.ts:87-90` 的 `SHADOW_CASTING_FIXTURE_TYPES` 只含 `{'downlight','spot'}`，
+   而这两种走 SpotLight 分支（`:301-339`），**从不调用 `fixtureCastsShadow`**。
+   PointLight 分支（`:341-357`）对 `pendant/sconce/floor/table` 调 `fixtureCastsShadow`，
+   但集合里没有它们，所以 `castShadow` 恒为 `false`（`:347` 注释已写明 P9 已关）。
+   当前场景投阴影的灯 = 1 太阳 + N 个筒灯/射灯。**没有 36 张立方体贴图。**
+2. **`POINT_SHADOW_MAP_SIZE`（`:73`，512）是死常量，从未被读取**。
+   唯一引用在 `:353` 的 `if (point.castShadow) { ... }` 块内，该块恒不可达。
+3. **太阳 2048² 是 P9 记录的 5FPS 头号成本**（见 `docs/P9-shadows-exposure-perf-spec.md:93-95`、`:122-132`）。
+   升回 2048² = 回滚 P9 已验收的「≥30 FPS」。**用户已确认：不升 2048²。**
 
-### 1. `src/scene/sceneEngine.ts` — 太阳 shadow 升级
+## 实际交付物（只有 3 项）
 
-**line 96**：
+### 1. `src/scene/sceneEngine.ts` — shadow camera 收紧到房间包围盒
+
+**line 334-339**，把视锥从 ±10 收紧到 ±6：
+
 ```ts
-const SUN_SHADOW_MAP_SIZE = 2048;  // P17：1024 → 2048（审查报告 §4 Day 5 i）
-```
-
-**line 332-338**：shadow camera 收紧到房间包围盒。房间是 6×4.5×2.8 米，太阳从北墙外射入，所以 shadow camera 不需要覆盖整个 ±10 米范围。
-
-```ts
-this.sunLight.shadow.mapSize.set(SUN_SHADOW_MAP_SIZE, SUN_SHADOW_MAP_SIZE);
-// P17：shadow camera 从 ±10 收紧到房间包围盒 ±6 米。旧 ±10 让 2048 分辨率
-// 覆盖 20×20 米范围（每像素 1cm），新 ±6 让 2048 覆盖 12×12 米（每像素 5mm），
-// 阴影边缘更锐利，且太阳从北墙射入时不需要覆盖东/西/南的远处。
-// 代价：太阳方位偏斜时（比如日落西北角），房间边缘可能被 shadow camera 裁掉。
-// 取折中值 ±6，覆盖对角线 8.5 米的房间 + 2 米余量。
 this.sunLight.shadow.camera.near = 0.5;
 this.sunLight.shadow.camera.far = 50;
 this.sunLight.shadow.camera.left = -6;
@@ -42,112 +35,105 @@ this.sunLight.shadow.camera.top = 6;
 this.sunLight.shadow.camera.bottom = -6;
 ```
 
-**line 352-353**：
-```ts
-this.sunLight.shadow.bias = -0.0005;   // 保持不变
-this.sunLight.shadow.normalBias = 0.02; // P17：0.03 → 0.02（审查报告 §4 Day 5 i）
-```
+**为什么 ±6 够**：房间 6×4.5×2.8m，对角线 √(6²+4.5²) = 7.5m，一半 3.75m。
+±6 覆盖 12×12m，含 ~2m 余量。太阳 DirectionalLight 的 target 恒在原点附近
+（`:347` `target.position.set(0, 0.5, 0)`），shadow camera 沿 target 方向投影。
 
-### 2. `src/render/lightBuilder.ts` — 人工灯只给 1–2 盏开 shadow
+**收益量化**（必须写进注释）：
+- 旧：1024² 覆盖 20×20m → 每像素 **19.5mm**
+- 新：1024² 覆盖 12×12m → 每像素 **11.7mm**（清晰度提升 67%）
+- 若走 2048²@±10m：9.8mm，但阴影贴图填充量 4× —— 正是 P9 记录的 5FPS 元凶。
+  本方案以 1/4 成本拿到 2048²@±10m 的 **85%** 像素密度。
 
-**line 73**：
-```ts
-const POINT_SHADOW_MAP_SIZE = 1024;  // P17：512 → 1024（审查报告 §4 Day 5 i）
-```
+`SUN_SHADOW_MAP_SIZE`（`:97`）**保持 1024 不动**。
 
-**line 96 的 `fixtureCastsShadow`**：改成「只给餐桌吊灯开 shadow」。
+### 2. `src/scene/sceneEngine.ts` — normalBias 0.03 → 0.02
 
-先读当前 `fixtureCastsShadow` 实现，然后改：
-
-```ts
-/**
- * 人工灯是否投射阴影。
- *
- * P17（审查报告 §4 Day 5 i）：只给「餐桌吊灯」开 shadow，其余全关。
- * 旧实现所有 PointLight/SpotLight 都开 shadow，每盏 PointLight 是立方体贴图
- * （6 面），场景里 6 盏 PointLight = 36 张阴影贴图，撑不住性能预算。
- * 新策略：只保留 1-2 盏重点灯的 shadow，其余关掉。
- *
- * 判定「餐桌吊灯」：type === 'pendant' 且 fixture 名包含 'dining' 或 'table'。
- * 但 fixtureCastsShadow 只接 type 字符串，无法判断具体是哪盏——所以需要
- * 扩展签名或加一个白名单机制。
- *
- * @param type fixture 类型
- * @param isDiningPendant 是否为餐桌吊灯（由调用方按 fixture.id 判断）
- */
-export function fixtureCastsShadow(type: string, isDiningPendant = false): boolean {
-  // P17：只有餐桌吊灯开 shadow
-  if (isDiningPendant) return true;
-  // 其他类型（pendant/dining 以外的吊灯、table 台灯、floor 落地灯等）全关
-  return false;
-}
-```
-
-**但这样需要调用方传 `isDiningPendant`**，改 `lightBuilder.ts:351, 381` 的调用点：
+**line 354**：
 
 ```ts
-// 调用方需要判断 fixture 是否为餐桌吊灯
-const isDiningPendant = f.type === 'pendant' && (f.id.includes('dining') || f.id.includes('table'));
-point.castShadow = fixtureCastsShadow(f.type, isDiningPendant);
+this.sunLight.shadow.bias = -0.0005;   // 不动
+this.sunLight.shadow.normalBias = 0.02; // P17：0.03 → 0.02
 ```
 
-**但 fixture.id 可能是随机生成的，不包含 'dining'**。更稳妥的判断是按 fixture 的「位置」或「用途」。
+**必须同步更新 `:350-352` 的注释**：原注释把 0.03 归因于旧的 19.5mm 视锥；
+现在视锥收紧到 11.7mm，采样密度变了，0.02 对应新密度。注释要说明是配合视锥
+收紧一起调的，否则后人会当成独立的经验值。
 
-**最简单的方案**：让 `fixtureCastsShadow` 只接受 type，并固定「pendant 类型开 shadow」，其余全关：
+### 3. `src/render/lightBuilder.ts` — 删除死代码
+
+原报告这半段的**真实有效含义**是「关掉人工灯的 PointLight 阴影预算」，而这个
+在 P9 已经完成（见上）。剩下的只是清理死代码，让 P9 的事实显式化：
+
+- **删除 `:73` 的 `POINT_SHADOW_MAP_SIZE`**（无引用）
+- **删除 `:352-354` 的 `if (point.castShadow) { ... }` 块**（恒不可达）
+- **删除 `:376-385` 的 default 兜底分支里的 `point.castShadow = fixtureCastsShadow(f.type)`**
+  （该分支 `castShadow` 恒 false，赋值无意义）
+- **重写 `:80-98` 的 `fixtureCastsShadow` 与 `SHADOW_CASTING_FIXTURE_TYPES` 注释**：
+  明确写「当前 PointLight 全部不投阴影，`fixtureCastsShadow` 对所有已知 PointLight
+  类型返回 false，集合实际只用于『将来若有类型需投阴影』的显式声明点」。
+  不要删这个函数——`:351` 还在用，删了会留下死分支。
+
+### 不要做
+
+- **不要新增「餐桌吊灯白名单」或 counter 机制**（`:121-128` 那套）。
+  没有需求：PointLight 已经全关，吊灯（pendant）本就不投阴影。
+- **不要动 SpotLight 的 shadow 逻辑**（`:308-309`、`:331-332`）。
+  筒灯/射灯是重点照明，保持开阴影。
+- **不要改 `SUN_SHADOW_MAP_SIZE`**。
+
+## 测试
+
+### `src/scene/__tests__/sceneEngine.test.ts` 新增
 
 ```ts
-export function fixtureCastsShadow(type: string): boolean {
-  // P17（审查报告 §4 Day 5 i）：只给餐桌吊灯（pendant 类型）开 shadow，
-  // 其余人工灯全关。旧实现所有 PointLight 都开 shadow，每盏是 6 面立方体
-  // 阴影贴图，撑不住性能预算。pendant 是餐厅吊灯的主要形态，开 shadow
-  // 能在餐桌区域产生真实的投影。
-  return type === 'pendant';
-}
+describe('sun shadow camera (P17)', () => {
+  it('shadow camera 收紧到 ±6（房间包围盒 + 余量）', () => {
+    const engine = new SceneEngine(backend);
+    const sun = /* DirectionalLight 查找 */;
+    expect(sun.shadow.camera.left).toBe(-6);
+    expect(sun.shadow.camera.right).toBe(6);
+    expect(sun.shadow.camera.top).toBe(6);
+    expect(sun.shadow.camera.bottom).toBe(-6);
+  });
+
+  it('mapSize 保持 1024（不升 2048²，P9 性能预算）', () => {
+    expect(sun.shadow.mapSize.x).toBe(1024);
+    expect(sun.shadow.mapSize.y).toBe(1024);
+  });
+
+  it('normalBias 0.02（配合 ±6 视锥的新像素密度）', () => {
+    expect(sun.shadow.normalBias).toBeCloseTo(0.02);
+  });
+
+  it('shadow camera 覆盖房间对角线 7.5m', () => {
+    // 12×12 覆盖对角线 7.5m 的房间 + 余量
+    const halfDiag = Math.sqrt(6 * 6 + 4.5 * 4.5) / 2; // 3.75
+    expect(halfDiag).toBeLessThan(6);
+  });
+});
 ```
 
-**问题**：这不是「只给 1–2 盏」，而是「所有 pendant 都开」。如果场景里有多盏 pendant（餐厅 + 卧室），就会多开。
-
-**最佳方案**：在 `sceneEngine.ts` 里建一个「shadow 白名单」，只把餐桌吊灯加进去。
-
-**但 fixture 注册表是 store 驱动的，sceneEngine 不直接管 fixture 列表**。
-
-**实际方案**：先按 type 判断（pendant 开），如果场景里 pendant 数量 > 2，就在 lightBuilder 里加一个 counter，只让前 2 个开：
+### `src/render/__tests__/lightBuilder.test.ts` 新增
 
 ```ts
-// lightBuilder.ts 内部加一个 counter
-let shadowFixtureCount = 0;
-const MAX_SHADOW_FIXTURES = 2;
+describe('fixtureCastsShadow (P17)', () => {
+  it('所有 PointLight 类型都不投阴影（P9 预算，P17 确认）', () => {
+    for (const t of ['pendant', 'sconce', 'floor', 'table', 'linear', 'cove', 'unknown']) {
+      expect(fixtureCastsShadow(t)).toBe(false);
+    }
+  });
 
-export function fixtureCastsShadow(type: string): boolean {
-  // P17：只给前 2 盏吊灯开 shadow，其余全关
-  if (type !== 'pendant') return false;
-  if (shadowFixtureCount >= MAX_SHADOW_FIXTURES) return false;
-  shadowFixtureCount++;
-  return true;
-}
+  it('SpotLight 类型不由 fixtureCastsShadow 决定（走 SpotLight 分支恒 true）', () => {
+    // 明确记录：downlight/spot 不被 fixtureCastsShadow 读取
+    expect(fixtureCastsShadow('downlight')).toBe(false);
+    expect(fixtureCastsShadow('spot')).toBe(false);
+  });
+});
 ```
 
-**但 counter 在多次重建光源时会累加，导致新加的 fixture 不开 shadow**。需要重置机制。
-
-**最简单的可维护方案**：先不做 counter，直接按 type 判断（所有 pendant 开 shadow）。如果性能有问题，再细化。
-
-```ts
-export function fixtureCastsShadow(type: string): boolean {
-  // P17（审查报告 §4 Day 5 i）：只给吊灯（pendant）开 shadow，其余人工灯全关。
-  // 旧实现所有 PointLight 都开 shadow，每盏是 6 面立方体阴影贴图，撑不住
-  // 性能预算。pendant 是餐厅吊灯的主要形态，开 shadow 能在餐桌区域产生
-  // 真实的投影。SpotLight 类型（downlight/spot）已有自己的 shadow 逻辑
-  // （line 308, 331），不受此函数影响。
-  return type === 'pendant';
-}
-```
-
-**注意**：SpotLight 的 shadow（line 308, 331）不受此函数影响，它们是独立判断的。SpotLight 是 downlight/spot 类型，属于重点照明，保持开 shadow。
-
-### 3. 测试
-
-- `sceneEngine.test.ts`：太阳 shadow.mapSize 应为 2048、shadow.camera.left/right/top/bottom 应为 ±6、normalBias 应为 0.02
-- `lightBuilder.test.ts`：`fixtureCastsShadow('pendant') === true`、`fixtureCastsShadow('table') === false`、`fixtureCastsShadow('floor') === false`、`fixtureCastsShadow('sconce') === false`
+**注意**：`lightBuilder.test.ts` 现有 11 个测试，先读一遍确认没有测试
+`POINT_SHADOW_MAP_SIZE` 或依赖那个死分支的断言。若有，一并更新。
 
 ## 验证
 
@@ -156,19 +142,22 @@ npm run verify
 npm run build
 ```
 
-**运行时验证**（父级做）：
-1. `?debug` 打开，数一下 scene 里有几个 `castShadow=true` 的 PointLight（应该 ≤ 2）
-2. 太阳 shadow.mapSize 应为 [2048, 2048]
-3. 用户硬刷新真 GPU，看太阳阴影边缘是否更锐利（2048 比 1024 细腻一倍）
+**运行时验证**（父级做，`?debug` + 控制台 `window.__luminaDebug`）：
+1. 遍历 scene 的 `isLight && castShadow`，应 = 1 太阳 + N 筒灯/射灯（**没有 PointLight**）
+2. 太阳 `shadow.camera.left === -6`、`mapSize.x === 1024`、`normalBias === 0.02`
+3. 太阳阴影边缘应比之前锐利（19.5mm → 11.7mm）
+4. **HUD 帧率应 ≥ 30**（与 P9 基线一致——本改动不增阴影贴图填充量）
 
 ## 红线
 
-1. **不要动 SpotLight 的 shadow 逻辑**（line 308, 331 的 SpotLight 独立判断，不受 `fixtureCastsShadow` 影响）
-2. **不要动 P16 的 Bloom 分档**
-3. **不要动 godrays**（P13 已定版）
-4. **不要动曝光分档逻辑**
-5. **不要动 P14 的材质**
-6. **不要动场景预设 PRESET_SCENES**
+1. **不要升 `SUN_SHADOW_MAP_SIZE` 到 2048**（用户已确认，回滚 P9 已验收性能）
+2. **不要动 SpotLight 的 shadow 逻辑**
+3. **不要动 P16 的 Bloom 分档**
+4. **不要动 godrays**（P13 已定版）
+5. **不要动曝光分档逻辑**
+6. **不要动 P14 的材质**
+7. **不要动 `PRESET_SCENES`**
+8. **不要新增未验证的白名单/counter 机制**（无需求，纯复杂度）
 
 ## 提交
 

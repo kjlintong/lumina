@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PointLight, RectAreaLight, SpotLight } from 'three';
 
-import { buildLightFromFixture, cctToRGB } from '../lightBuilder.js';
+import { buildLightFromFixture, cctToRGB, fixtureCastsShadow } from '../lightBuilder.js';
 import { makeFixture } from '../../core/makeFixture.js';
 
 describe('cctToRGB — 色温 → sRGB（Tanner Helland 近似）', () => {
@@ -80,5 +80,26 @@ describe('buildLightFromFixture — Fixture → Three.js 光源', () => {
     // 2700K 暖光：r 满量程、b 明显偏低；若误用原始开尔文值分量会远超 1
     expect(point.color.r).toBe(1);
     expect(point.color.b).toBeLessThan(0.5);
+  });
+});
+
+describe('fixtureCastsShadow (P17)', () => {
+  it('所有 PointLight 类型都不投阴影（P9 预算，P17 确认）', () => {
+    // P9 已把 PointLight 全关掉（立方体贴图 6 面/盏成本高、视觉收益低）。
+    // P17 显式化：`SHADOW_CASTING_FIXTURE_TYPES` 为空集合，本函数对所有
+    // PointLight 类型恒 false。包括 RectAreaLight 类型（linear / cove，
+    // 引擎本身也不支持阴影）和未识别类型。
+    for (const t of ['pendant', 'sconce', 'floor', 'table', 'linear', 'cove', 'unknown']) {
+      expect(fixtureCastsShadow(t)).toBe(false);
+    }
+  });
+
+  it('downlight/spot 不由 fixtureCastsShadow 决定（走 SpotLight 分支恒 true）', () => {
+    // 明确记录：downlight/spot 不在 SHADOW_CASTING_FIXTURE_TYPES 集合内
+    // （P17 已从集合中删除，避免误导读者以为它们依赖此函数）。
+    // 它们的 castShadow 由 buildLightFromFixture 的 SpotLight 分支硬编码
+    // 为 true，与 fixtureCastsShadow 完全无关。
+    expect(fixtureCastsShadow('downlight')).toBe(false);
+    expect(fixtureCastsShadow('spot')).toBe(false);
   });
 });

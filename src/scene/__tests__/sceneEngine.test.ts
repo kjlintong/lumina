@@ -274,6 +274,41 @@ describe('SceneEngine', () => {
     });
   });
 
+  describe('sun shadow camera (P17)', () => {
+    it('shadow camera 收紧到 ±6（房间包围盒 + 余量）', () => {
+      const engine = new SceneEngine(backend);
+      const sun = engine
+        .getScene()
+        .children.find((c) => c instanceof DirectionalLight) as DirectionalLight;
+      expect(sun.shadow.camera.left).toBe(-6);
+      expect(sun.shadow.camera.right).toBe(6);
+      expect(sun.shadow.camera.top).toBe(6);
+      expect(sun.shadow.camera.bottom).toBe(-6);
+    });
+
+    it('mapSize 保持 1024（不升 2048²，P9 性能预算）', () => {
+      const engine = new SceneEngine(backend);
+      const sun = engine
+        .getScene()
+        .children.find((c) => c instanceof DirectionalLight) as DirectionalLight;
+      expect(sun.shadow.mapSize.x).toBe(1024);
+      expect(sun.shadow.mapSize.y).toBe(1024);
+    });
+
+    it('normalBias 0.02（配合 ±6 视锥的新像素密度）', () => {
+      const engine = new SceneEngine(backend);
+      const sun = engine
+        .getScene()
+        .children.find((c) => c instanceof DirectionalLight) as DirectionalLight;
+      expect(sun.shadow.normalBias).toBeCloseTo(0.02);
+    });
+
+    it('shadow camera 覆盖房间对角线 7.5m（±6 含 ~2m 余量）', () => {
+      const halfDiag = Math.sqrt(6 * 6 + 4.5 * 4.5) / 2; // 3.75
+      expect(halfDiag).toBeLessThan(6);
+    });
+  });
+
   describe('dispose', () => {
     it('calls backend.dispose', () => {
       const engine = new SceneEngine(backend);

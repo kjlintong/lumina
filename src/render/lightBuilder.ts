@@ -69,29 +69,51 @@ const MIN_HALF_ANGLE = 0.02;
 /** 阴影贴图尺寸（P9 从 2048 降到 1024：阴影预算收敛，恢复帧率） */
 const SHADOW_MAP_SIZE = 1024;
 
-/** 点光源阴影贴图尺寸（已不投阴影，保留以防回退） */
-const POINT_SHADOW_MAP_SIZE = 512;
-
 /**
- * P9 阴影预算：**只有向下投射的光投阴影**。
+ * P9 阴影预算：**当前 PointLight 全部不投阴影**。
  *
- * 实测：默认场景 4 盏投阴影光（1 directional + 1 spot + 2 point），
- * 每帧渲染 14 张阴影贴图（PointLight 是立方体贴图 = 6 面），
- * HUD 帧率 5-8 FPS，控制台 `Runtime.evaluate` 都会超时。
+ * 实测：PointLight 是立方体贴图（6 面/盏），默认场景 2 盏 PointLight 就要
+ * 12 张阴影贴图，是 P9 记录的 5-8 FPS 元凶之一。P9 已把 PointLight 的
+ * `castShadow` 全关掉；本函数**从未被 SpotLight 分支调用**，只对
+ * PointLight 分支（pendant / sconce / floor / table / default 兜底）
+ * 生效。因此：
  *
- * `downlight` / `spot` 的阴影落在活动区工作面上，视觉价值最高；
- * `pendant` / `sconce` / `floor` / `table` 的阴影是「灯下暗斑」，
- * 视觉收益低、性能成本高，一律不投。这是**有意的产品取舍**，
- * 不是 bug —— 若未来需要恢复，改这里即可。
+ * - **集合为空**：即表达「当前没有类型经此函数决定投阴影」这一事实，
+ *   等价于「所有 PointLight 类型都不投阴影」。
+ * - **`downlight` / `spot` 不在集合内**：它们走 SpotLight 分支（见下方
+ *   `buildLightFromFixture` 的 `case 'downlight'` / `case 'spot'`），
+ *   `castShadow` 由分支内**硬编码**为 true，与 `fixtureCastsShadow` 无关。
+ *   把这两个类型写进集合会误导读者以为它们依赖此函数——事实上
+ *   `fixtureCastsShadow('downlight')` 返回 false，但 downlight 依然投阴影
+ *   （由 SpotLight 分支硬编码）。P17 从集合中删除了它们。
+ *
+ * **本集合的实际作用**：只作为「将来若有类型需投阴影」的显式声明点。
+ * 目前为空即表达「当前 PointLight 全部不投阴影」。若未来需要给某类
+ * PointLight 恢复阴影（例如餐桌吊灯的重点照明），把该类型加入集合即可，
+ * PointLight 分支的 `point.castShadow = fixtureCastsShadow(f.type)` 会
+ * 自动生效，无需改调用点。
+ *
+ * 详见 `docs/p17-spec.md` 与 `docs/P9-shadows-exposure-perf-spec.md`。
  */
-const SHADOW_CASTING_FIXTURE_TYPES: ReadonlySet<string> = new Set([
-  'downlight',
-  'spot',
-]);
+const SHADOW_CASTING_FIXTURE_TYPES: ReadonlySet<string> = new Set<string>([]);
 
 /**
  * 判断某灯具类型是否投阴影（纯函数，供单测）。
- * 未在集合内的类型（pendant / sconce / floor / table / linear / cove）都不投。
+ *
+ * **当前语义（P9 起生效，P17 显式化）**：此函数只被 PointLight 分支调用
+ * （pendant / sconce / floor / table / default 兜底）。SpotLight 分支
+ * （downlight / spot）走自己的 `case`，硬编码 `castShadow = true`，
+ * 与本函数无关。
+ *
+ * 因为 `SHADOW_CASTING_FIXTURE_TYPES` 为空集合，本函数对**所有字符串**
+ * 都返回 false——包括所有已知 PointLight 类型（pendant / sconce / floor /
+ * table / linear / cove）、未识别类型（unknown）、以及 SpotLight 类型
+ * （downlight / spot，尽管它们的实际 castShadow 由 SpotLight 分支硬编码）。
+ *
+ * 该函数保留（而非删除）：`buildLightFromFixture` 的 PointLight 分支
+ * 仍调用它（`point.castShadow = fixtureCastsShadow(f.type)`），删了
+ * 会留下死分支。未来若需要给某类 PointLight 恢复阴影，改
+ * `SHADOW_CASTING_FIXTURE_TYPES` 即可，无需改调用点。
  */
 export function fixtureCastsShadow(type: string): boolean {
   return SHADOW_CASTING_FIXTURE_TYPES.has(type);
@@ -345,13 +367,15 @@ export function buildLightFromFixture(f: Fixture): LightBuildResult {
       // 全向点光源：吊灯 / 壁灯 / 落地灯 / 台灯。
       // decay 2 = 物理平方反比衰减；台灯距离更短（近距离照明）。
       // P9 阴影预算：不投阴影（立方体贴图 6 面/盏，成本高、视觉收益低）。
+      // P17：`fixtureCastsShadow` 对所有 PointLight 类型恒 false（见上方
+      // `SHADOW_CASTING_FIXTURE_TYPES` 注释），因此 `point.castShadow` 恒
+      // false——不再有 shadow mapSize 需要设置（POINT_SHADOW_MAP_SIZE 已删除）。
+      // 保留 `castShadow = fixtureCastsShadow(f.type)` 是显式的声明点：
+      // 未来若给某类 PointLight 恢复阴影，改集合即可，无需改此处。
       const distance = f.type === 'table' ? POINT_DISTANCE * 0.6 : POINT_DISTANCE;
       const point = new PointLight(color, candela, distance, 2);
       point.position.set(fx, fy, fz);
       point.castShadow = fixtureCastsShadow(f.type);
-      if (point.castShadow) {
-        point.shadow.mapSize.set(POINT_SHADOW_MAP_SIZE, POINT_SHADOW_MAP_SIZE);
-      }
       group.add(point);
       light = point;
       break;
@@ -375,10 +399,11 @@ export function buildLightFromFixture(f: Fixture): LightBuildResult {
 
     default: {
       // 兜底：任何未显式映射的类型用 PointLight，保证场景不会缺一盏灯。
-      // P9 阴影预算：兜底点光源也不投阴影（立方体贴图 6 面/盏，成本高、视觉收益低）。
+      // P9 阴影预算：兜底点光源也不投阴影（立方体贴图 6 面/盏，成本高、
+      // 视觉收益低）。P17：`fixtureCastsShadow` 恒 false（见上方注释），
+      // 因此 `point.castShadow = fixtureCastsShadow(f.type)` 赋值无意义，已删除。
       const point = new PointLight(color, candela, POINT_DISTANCE, 2);
       point.position.set(fx, fy, fz);
-      point.castShadow = fixtureCastsShadow(f.type);
       group.add(point);
       light = point;
       break;

@@ -88,11 +88,14 @@ const SUN_DIST = 15;
 const SKY_SUN_DIST = 24;
 
 /**
- * 太阳阴影贴图边长（P9 从 2048 降到 1024）。
+ * 太阳阴影贴图边长（P9 从 2048 降到 1024）。**保持 1024 不动**。
  *
- * 2048² 是全场景最大的单张阴影贴图，也是 5-8 FPS 的主要成本之一。
- * 太阳用正交相机（非立方体），1024² 投影到 ±10m 的视锥上，
- * 每像素覆盖约 2cm，对 6×4.5m 的房间足够。
+ * 2048² 是全场景最大的单张阴影贴图，也是 P9 记录的 5-8 FPS 主要成本之一。
+ * P17 通过收紧 shadow camera 视锥（±10 → ±6，见下方初始化块）在**同一张
+ * 1024² 贴图**上把每像素覆盖从 19.5mm 降到 11.7mm（清晰度 +67%），
+ * 而不是升 2048² —— 后者阴影贴图填充量 4×（2048² vs 1024²），正是 P9
+ * 的头号元凶；升回 2048² 等于回滚 P9 已验收的「≥30 FPS」。
+ * 详见 `docs/p17-spec.md`。
  */
 const SUN_SHADOW_MAP_SIZE = 1024;
 
@@ -333,10 +336,19 @@ export class SceneEngine {
     this.sunLight.shadow.mapSize.set(SUN_SHADOW_MAP_SIZE, SUN_SHADOW_MAP_SIZE);
     this.sunLight.shadow.camera.near = 0.5;
     this.sunLight.shadow.camera.far = 50;
-    this.sunLight.shadow.camera.left = -10;
-    this.sunLight.shadow.camera.right = 10;
-    this.sunLight.shadow.camera.top = 10;
-    this.sunLight.shadow.camera.bottom = -10;
+    // P17：shadow camera 视锥从 ±10 收紧到 ±6（覆盖 12×12m）。
+    // 为什么 ±6 够：房间 6×4.5×2.8m，对角线 √(6²+4.5²) = 7.5m，一半 3.75m；
+    // ±6 覆盖 12×12m，含约 2m 余量。太阳 target 恒在原点附近（下方
+    // `target.position.set(0, 0.5, 0)`），shadow camera 沿 target 方向投影。
+    // 收益量化：
+    //   - 旧 1024² @ ±10m：20m / 1024 = 每像素 19.5mm
+    //   - 新 1024² @ ±6m：12m / 1024 = 每像素 11.7mm（清晰度 +67%）
+    //   - 若走 2048² @ ±10m：9.8mm，但阴影贴图填充量 4× —— 正是 P9 记录的
+    //     5FPS 元凶。本方案以 1/4 成本拿到 2048²@±10m 的 85% 像素密度。
+    this.sunLight.shadow.camera.left = -6;
+    this.sunLight.shadow.camera.right = 6;
+    this.sunLight.shadow.camera.top = 6;
+    this.sunLight.shadow.camera.bottom = -6;
     // P9 关键修复：**必须把 target 加入场景**。
     // DirectionalLight.target 不参与场景图时，Three.js 每帧无法更新它的
     // matrixWorld（见 `WebGLShadowMap` 的注释：target 的矩阵只在其是场景
@@ -350,8 +362,13 @@ export class SceneEngine {
     // P9：偏置调优。directional 光下 `bias` 用负值抵消「自遮挡」剥离线；
     // `normalBias` 让顶点沿法线偏移采样，消除墙面/天花板附近的阴影泄漏。
     // 不要把 bias 设成很大的负数（会导致阴影从物体表面剥离成一条亮线）。
+    // P17：`normalBias` 0.03 → 0.02，**必须与上方视锥收紧一起看**——0.03
+    // 对应旧的 ±10m 视锥（1024² 下每像素 19.5mm）；视锥收紧到 ±6m 后
+    // 采样密度变高（每像素 11.7mm），0.03 的偏移量对新密度偏大，
+    // 会重新引入「阴影沿法线漂移」的伪影，0.02 对应新的采样密度。
+    // 这不是独立的经验值，是配合 P17 视锥收紧的联动调整。
     this.sunLight.shadow.bias = -0.0005;
-    this.sunLight.shadow.normalBias = 0.03;
+    this.sunLight.shadow.normalBias = 0.02;
 
     this.ambientLight = new AmbientLight(0x404040, 0.3);
     this.scene.add(this.ambientLight);
