@@ -314,9 +314,10 @@ export default function App() {
           roomWidth: 6,
           roomDepth: 4.5,
           roomHeight: 2.8,
-          // P8a：初始 17:45（日落前），时间冻结（timeSpeed=0），用户拖速度滑杆才流逝
+          // P15：初始 17:45（日落前），时间以 0.1 小时/秒流逝——用户 24 秒能看到
+          // 太阳从西斜射到日出，画面色温随之渐变。速度滑杆仍可微调（0 = 冻结）。
           initialHour: 17.75,
-          timeSpeed: 0,
+          timeSpeed: 0.1,
         });
         engineRef.current = engine;
         backendRef.current = result.backend;

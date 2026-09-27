@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { Mesh, MeshBasicMaterial, Vector3 } from 'three';
+import { BufferAttribute, Mesh, MeshBasicMaterial, Vector3 } from 'three';
 
-import { buildSkyScene, skyColors } from '../sky.js';
+import { buildSkyScene, setSkyBackdropColors, skyColors } from '../sky.js';
 
 // skyColors 是纯函数（返回 plain {r,g,b}），可直接测；
 // buildSkyScene 只构建 Three.js 对象（无 WebGL 调用），断言其结构即可。
@@ -64,6 +64,55 @@ describe('buildSkyScene — 窗外远景', () => {
       expect(child.receiveShadow).toBe(false);
       // 都在窗外（局部 z < 0，组原点即窗中心）
       expect(child.position.z).toBeLessThan(0);
+    }
+  });
+});
+
+describe('setSkyBackdropColors — 背板渐变方向（P15 防回归）', () => {
+  // sRGB → 线性（与 sky.ts 内 toLin 相同），顶点色按线性值存储
+  const toLin = (v: number): number =>
+    v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+
+  // 两个方向都拉得开的颜色：top=冷蓝，horizon=暖橙
+  const top = { r: 0.1, g: 0.2, b: 0.5 };
+  const horizon = { r: 0.9, g: 0.5, b: 0.1 };
+
+  const SEG = 16;
+  const readRow = (backdrop: Mesh, row: number): [number, number, number] => {
+    const attr = backdrop.geometry.getAttribute('color');
+    expect(attr).toBeInstanceOf(BufferAttribute);
+    const arr = (attr as BufferAttribute).array as Float32Array;
+    const base = row * 2 * 3; // 每行 2 顶点（左右），同色
+    return [arr[base]!, arr[base + 1]!, arr[base + 2]!];
+  };
+
+  it('顶部顶点（i=0, y=+h/2）取 top（天顶色），底部顶点（i=16, y=-h/2）取 horizon（地平线色）', () => {
+    const { backdrop } = buildSkyScene(new Vector3(0, 1.4, -2.25), new Vector3(0, 0, -1));
+    setSkyBackdropColors(backdrop, top, horizon);
+
+    // 顶部 = 线性化后的 top
+    const [tr, tg, tb] = readRow(backdrop, 0);
+    expect(tr).toBeCloseTo(toLin(top.r), 5);
+    expect(tg).toBeCloseTo(toLin(top.g), 5);
+    expect(tb).toBeCloseTo(toLin(top.b), 5);
+
+    // 底部 = 线性化后的 horizon
+    const [br, bg, bb] = readRow(backdrop, SEG);
+    expect(br).toBeCloseTo(toLin(horizon.r), 5);
+    expect(bg).toBeCloseTo(toLin(horizon.g), 5);
+    expect(bb).toBeCloseTo(toLin(horizon.b), 5);
+  });
+
+  it('渐变方向单调：从上（天顶）往下（地平线）w 递减，不反向', () => {
+    const { backdrop } = buildSkyScene(new Vector3(0, 1.4, -2.25), new Vector3(0, 0, -1));
+    setSkyBackdropColors(backdrop, top, horizon);
+    // 用 b 分量作探针：top.b(0.5) 远高于 horizon.b(0.1)，顶部应更接近 top.b，
+    // 底部更接近 horizon.b，整体从上往下 b 单调不增（蓝→橙）。
+    let prev = Infinity;
+    for (let row = 0; row <= SEG; row++) {
+      const [, , b] = readRow(backdrop, row);
+      expect(b).toBeLessThanOrEqual(prev + 1e-6);
+      prev = b;
     }
   });
 });

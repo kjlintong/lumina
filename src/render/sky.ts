@@ -186,12 +186,17 @@ export function setSkyBackdropColors(backdrop: Mesh, top: Rgb, horizon: Rgb): vo
   const hl = { r: toLin(horizon.r), g: toLin(horizon.g), b: toLin(horizon.b) };
 
   for (let i = 0; i <= BACKDROP_SEG; i++) {
-    const t = i / BACKDROP_SEG;
-    // 底部 12% 保持地平线暖色形成明显暖色带；其上随 t 增大平滑过渡到天顶。
-    // 注意：必须用连续插值，不能用 `t > 0.12 ? 1 : 0` 的二值开关——
-    // 二值会让背板直接从天顶蓝跳变到地平线橙，没有任何中间调，
+    const t = i / BACKDROP_SEG; // t=0 是顶部（y=+h/2），t=1 是底部（y=-h/2）
+    // P15：t=0（顶部）取 top（天顶），t=1（底部）取 horizon（地平线）。
+    // 旧实现 w = (t-0.12)/(1-0.12) 方向反了——t 随 i 递增是从顶到底，
+    // 不是从地平线到天顶，导致整个渐变上下颠倒：顶部本应深蓝紫却是橙色、
+    // 底部本应橙金却是暗蓝紫，视觉上就是「窗外一片死黑」的根因。
+    // 用 (1-t) 把高度方向摆正：顶部 (1-t)=1 → top，底部 (1-t)=0 → horizon。
+    // 底部 12%（t∈[0.88,1]）保持地平线暖色形成明显暖色带（视觉锚点），
+    // 上部 88% 全是天顶色。注意：必须用连续插值，不能用 `t > 0.88 ? 0 : 1`
+    // 的二值开关——二值会让背板直接从天顶蓝跳变到地平线橙，没有任何中间调，
     // 视觉上等同纯色块（且与 bloom 叠加后表现怪异）。
-    const w = Math.min((t - 0.12) / (1 - 0.12), 1); // 0（地平线）→ 1（天顶）
+    const w = Math.min((1 - t) / 0.12, 1); // 0（地平线，底部）→ 1（天顶，顶部）
     const r = hl.r + (tl.r - hl.r) * w;
     const g = hl.g + (tl.g - hl.g) * w;
     const b = hl.b + (tl.b - hl.b) * w;
