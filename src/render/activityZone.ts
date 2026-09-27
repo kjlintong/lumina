@@ -49,6 +49,9 @@ export function buildActivityZone(zone: ActivityZone, selected: boolean): Group 
   group.name = `zoneviz:${zone.key}`;
   group.position.set(zone.pos[0], 0, zone.pos[1]);
   group.rotation.y = zone.rotY;
+  // P24-b：未选中时整组隐藏（3D 主画面不显示分区线框，报告硬伤 #2）。
+  // 选中时才可见，与 ZonePanel 呼应。分区信息常驻在 2D 平面图（FloorPlan）。
+  group.visible = selected;
 
   const [w, d] = zone.size;
   const hue = typeHue(zone.type);

@@ -96,4 +96,16 @@ describe('buildActivityZone — 活动区可视化', () => {
     const b = buildActivityZone(makeZone('kitchen', [0, 0]), false);
     expect(borderColorHex(a)).not.toBe(borderColorHex(b));
   });
+
+  // ---- P24-b：3D 主画面不显示分区线框（报告硬伤 #2）----
+
+  it('P24-b：未选中时整组隐藏（3D 主画面无分区色块/边框）', () => {
+    const group = buildActivityZone(makeZone('lounge', [0, 0]), false);
+    expect(group.visible).toBe(false);
+  });
+
+  it('P24-b：选中时整组可见（与 ZonePanel 呼应）', () => {
+    const group = buildActivityZone(makeZone('lounge', [0, 0]), true);
+    expect(group.visible).toBe(true);
+  });
 });
