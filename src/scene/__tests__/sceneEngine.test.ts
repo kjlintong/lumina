@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DirectionalLight, AmbientLight } from 'three';
 import type { Color } from 'three';
 import type { RenderBackend, BackendCapabilities } from '../../render/backend.js';
+import { easeInOutQuad, lerp } from '../cameraPresets.js';
 import { SceneEngine } from '../sceneEngine.js';
 import type { Fixture } from '../../core/types.js';
 import { makeFixture } from '../../core/makeFixture.js';
@@ -258,6 +259,143 @@ describe('SceneEngine', () => {
       expect(cam.position.x).toBeCloseTo(5);
       expect(cam.position.y).toBeCloseTo(2);
       expect(cam.position.z).toBeCloseTo(3);
+    });
+  });
+
+  describe('setCameraPreset (P18)', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** orbitControls 是 private；测试只读 enableDamping/target，不走公开 API。 */
+    function ctrl(engine: SceneEngine): { enableDamping: boolean; target: { x: number; y: number; z: number } } {
+      return (engine as unknown as { orbitControls: { enableDamping: boolean; target: { x: number; y: number; z: number } } })
+        .orbitControls;
+    }
+
+    /** 推 N 帧：runOnlyPendingTimers 不推进时钟，只触发已就绪的 rAF 回调。 */
+    function stepFrames(n: number): void {
+      for (let i = 0; i < n; i++) vi.runOnlyPendingTimers();
+    }
+
+    it('durationMs=0：立即到位（position 三个分量 + target）', () => {
+      const engine = new SceneEngine(backend);
+      engine.setCameraPreset('overview', 0, 1_000_000);
+      const cam = engine.getCamera();
+      expect(cam.position.x).toBeCloseTo(2.0);
+      expect(cam.position.y).toBeCloseTo(2.2);
+      expect(cam.position.z).toBeCloseTo(2.0);
+      // target 是独立通道（setCameraPosition 只会重置成 (0,1.5,0)），必须一起验证
+      const t = ctrl(engine).target;
+      expect(t.x).toBeCloseTo(0);
+      expect(t.y).toBeCloseTo(1.0);
+      expect(t.z).toBeCloseTo(0);
+    });
+
+    it('durationMs=0 也立即到位（window 机位）', () => {
+      const engine = new SceneEngine(backend);
+      engine.setCameraPreset('window', 0, 1_000_000);
+      const cam = engine.getCamera();
+      expect(cam.position.x).toBeCloseTo(0.6);
+      expect(cam.position.y).toBeCloseTo(1.5);
+      expect(cam.position.z).toBeCloseTo(1.2);
+      expect(ctrl(engine).target.z).toBeCloseTo(-3);
+    });
+
+    it('未知 key 静默返回，相机与 damping 都不动', () => {
+      const engine = new SceneEngine(backend);
+      const before = engine.getCamera().position.x;
+      engine.setCameraPreset('does-not-exist', 0, 1_000_000);
+      expect(engine.getCamera().position.x).toBeCloseTo(before);
+      // 未命中不应有副作用：enableDamping 仍是 P12 构造时的 true
+      expect(ctrl(engine).enableDamping).toBe(true);
+    });
+
+    it('durationMs>0：复用主渲染循环插值，不走 durationMs=0 快速路径', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(1_000_000);
+      const engine = new SceneEngine(backend, { initialHour: 0 });
+      const start = engine.getCamera().position.clone(); // P12 初始机位 (1.7,1.55,1.6)
+
+      // 刚调用尚未推进：起点不动
+      engine.setCameraPreset('overview', 800);
+      expect(engine.getCamera().position.x).toBeCloseTo(start.x);
+      expect(engine.getCamera().position.y).toBeCloseTo(start.y);
+      // tween 期间禁用 damping，避免阻尼惯性 vs 直接写 position 打架抖动
+      expect(ctrl(engine).enableDamping).toBe(false);
+
+      // 启动真实主渲染循环，让 rAF 驱动 tween（红线 1：不另起 rAF）
+      engine.start();
+      stepFrames(10); // ~160ms/800ms ≈ 20%
+      expect(engine.getCamera().position.x).toBeGreaterThan(start.x);
+      expect(engine.getCamera().position.x).toBeLessThan(2.0); // easeInOutQuad 起步慢
+
+      // 走完并过终点：到位，damping 恢复 P12 原值 true
+      stepFrames(60); // ~1s > 800ms
+      const cam = engine.getCamera();
+      expect(cam.position.x).toBeCloseTo(2.0, 1);
+      expect(cam.position.y).toBeCloseTo(2.2, 1);
+      expect(cam.position.z).toBeCloseTo(2.0, 1);
+      expect(ctrl(engine).target.y).toBeCloseTo(1.0, 1);
+      expect(ctrl(engine).enableDamping).toBe(true);
+
+      engine.dispose();
+    });
+
+    it('durationMs>0：插值走 easeInOutQuad（同样线性进度下位移小于线性）', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(2_000_000);
+      const engine = new SceneEngine(backend, { initialHour: 0 });
+      engine.setCameraPreset('overview', 800);
+      engine.start();
+
+      stepFrames(10);
+      // k 从实际墙钟时间推出（不假设帧数 × 16ms），与引擎内的时间源一致
+      const k = (Date.now() - 2_000_000) / 800;
+      const easedX = lerp(1.7, 2.0, easeInOutQuad(k));
+      const linearX = lerp(1.7, 2.0, k);
+      expect(engine.getCamera().position.x).toBeCloseTo(easedX, 1);
+      expect(engine.getCamera().position.x).toBeLessThan(linearX);
+
+      engine.dispose();
+    });
+
+    it('连点两个机位：第二条覆盖第一条，从当前实时位置起步（不叠加）', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(3_000_000);
+      const engine = new SceneEngine(backend, { initialHour: 0 });
+
+      engine.setCameraPreset('overview', 800);
+      engine.start();
+      stepFrames(24); // ~384ms/800ms ≈ 48%
+      const interrupted = engine.getCamera().position.clone();
+      expect(interrupted.x).toBeGreaterThan(1.7); // 确实在移动
+      expect(interrupted.x).toBeLessThan(2.0); // 还没到 overview
+
+      // 中途打断：from 取当前实时位置（不是旧 tween 的 to），所以不会叠加
+      // 两个运动 —— 这正是原审查报告的自持 rAF 方案缺失的取消机制。
+      engine.setCameraPreset('sofa', 800);
+      stepFrames(60);
+      const cam = engine.getCamera();
+      expect(cam.position.x).toBeCloseTo(-1.5, 1);
+      expect(cam.position.y).toBeCloseTo(1.2, 1);
+      expect(ctrl(engine).target.z).toBeCloseTo(-1, 1);
+      expect(ctrl(engine).enableDamping).toBe(true);
+
+      engine.dispose();
+    });
+
+    it('durationMs=0：tween 立即清掉，下一帧是廉价空操作', () => {
+      const engine = new SceneEngine(backend);
+      engine.setCameraPreset('overview', 0, 1_000_000);
+      // durationMs=0 立即到位；stepCameraTween 走完把 cameraTween 置 null。
+      // damping 从头到尾没被禁用（只有进入 tween 才禁）。
+      expect(ctrl(engine).enableDamping).toBe(true);
+      // tween 为 null 时主循环的 stepCameraTween 是空操作，不抛、不改位姿
+      vi.useFakeTimers();
+      const b = engine.getCamera().position.x;
+      expect(() => vi.advanceTimersByTime(100)).not.toThrow();
+      expect(engine.getCamera().position.x).toBeCloseTo(b);
     });
   });
 

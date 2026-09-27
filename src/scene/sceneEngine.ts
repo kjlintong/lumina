@@ -55,6 +55,7 @@ import { buildPlanter, buildPlant } from '../render/plants.js';
 import { AutoExposure } from '../render/autoExposure.js';
 import { bloomForSunIntensity } from '../render/postProcessing.js';
 import { solarColor, solarPosition } from './solar.js';
+import { cameraPresetByKey, easeInOutQuad, lerp } from './cameraPresets.js';
 
 /** 场景引擎配置 */
 export interface SceneEngineConfig {
@@ -205,6 +206,16 @@ export class SceneEngine {
   private animationId: number | null = null;
   private lastTime = 0;
   private orbitControls: OrbitControls;
+
+  /** 相机机位 tween 状态（P18）；null = 无过渡在进行 */
+  private cameraTween: {
+    fromPos: [number, number, number];
+    toPos: [number, number, number];
+    fromTarget: [number, number, number];
+    toTarget: [number, number, number];
+    startMs: number;
+    durationMs: number;
+  } | null = null;
 
   /** 帧率滑动平均（P8c HUD）。animate 内按 `0.9*fps + 0.1*(1/dt)` 更新。 */
   private fps = 0;
@@ -922,6 +933,13 @@ export class SceneEngine {
       // 每帧回调（场景过渡动画等）
       this.frameCallback?.(time);
 
+      // P18：相机机位 tween（复用主循环，不另起 rAF）。
+      // 时间源用 Date.now() 而**不是** rAF 的 `time`：`time` 是 performance.now
+      // 域，tween.startMs 来自 Date.now() 墙钟域，两者不可混用（混用会让
+      // k 恒为 0，过渡永不推进）。单一时间源也让 vi.advanceTimersByTime
+      // 在测试里能真正推进 tween。
+      this.stepCameraTween(Date.now());
+
       // 更新轨道控制器
       this.orbitControls.update();
 
@@ -1021,6 +1039,90 @@ export class SceneEngine {
     this.camera.position.set(x, y, z);
     this.orbitControls.target.set(0, 1.5, 0);
     this.orbitControls.update();
+  }
+
+  /**
+   * 切换到指定相机机位预设（P18，审查报告 §4 Day 6 k）。
+   *
+   * 实现要点：
+   * - 走引擎主渲染循环（start() 的 animate），**不另起 rAF**。
+   * - durationMs = 0 时立即到位（无过渡），供测试与「直接跳位」。
+   * - 重复调用会覆盖上一条 tween（from 取当前实时位置，不取旧 tween 的 to），
+   *   所以连点两个机位是自然打断，不是叠加。
+   * - 用 easeInOutQuad：起步慢、中段快、收尾慢，比线性更像「镜头运镜」。
+   *
+   * @param presetKey 预设 key（见 cameraPresets.CAMERA_PRESETS）；未命中静默返回
+   * @param durationMs 过渡时长，默认 800；0 = 立即到位
+   * @param nowMs 时间源，默认 Date.now()。测试注入 fake 时间用。
+   */
+  setCameraPreset(presetKey: string, durationMs = 800, nowMs = Date.now()): void {
+    const preset = cameraPresetByKey(presetKey);
+    if (!preset) return;
+
+    const fromPos: [number, number, number] = [
+      this.camera.position.x,
+      this.camera.position.y,
+      this.camera.position.z,
+    ];
+    const fromTarget: [number, number, number] = [
+      this.orbitControls.target.x,
+      this.orbitControls.target.y,
+      this.orbitControls.target.z,
+    ];
+
+    // tween 期间禁用 damping：enableDamping 会根据「当前角度 vs 目标角度」施加
+    // 惯性，与 tween 每帧直接写 position 冲突，会产生抖动。tween 本身已经
+    // 平滑（easeInOutQuad），不需要额外阻尼。tween 结束后再恢复。
+    // 上一条还在跑时 enableDamping 已是 false，跳过避免重复赋值。
+    if (!this.cameraTween) {
+      this.orbitControls.enableDamping = false;
+    }
+
+    this.cameraTween = {
+      fromPos,
+      toPos: [...preset.position],
+      fromTarget,
+      toTarget: [...preset.target],
+      startMs: nowMs,
+      durationMs: Math.max(0, durationMs),
+    };
+
+    if (this.cameraTween.durationMs === 0) {
+      this.stepCameraTween(nowMs);
+    }
+  }
+
+  /**
+   * 推进相机 tween 一步（每帧调用；tween 为 null 时是廉价空操作）。
+   * 纯状态推进 + 写 camera/orbitControls，无副作用。
+   *
+   * @param nowMs 墙钟时间（Date.now 域）。**不要**传 rAF 时间戳 —— 那是
+   *   performance.now 域，与 startMs 不同域。
+   */
+  private stepCameraTween(nowMs: number): void {
+    const t = this.cameraTween;
+    if (!t) return;
+
+    const raw = t.durationMs <= 0 ? 1 : (nowMs - t.startMs) / t.durationMs;
+    const k = Math.min(Math.max(raw, 0), 1);
+    const e = easeInOutQuad(k);
+
+    this.camera.position.set(
+      lerp(t.fromPos[0], t.toPos[0], e),
+      lerp(t.fromPos[1], t.toPos[1], e),
+      lerp(t.fromPos[2], t.toPos[2], e),
+    );
+    this.orbitControls.target.set(
+      lerp(t.fromTarget[0], t.toTarget[0], e),
+      lerp(t.fromTarget[1], t.toTarget[1], e),
+      lerp(t.fromTarget[2], t.toTarget[2], e),
+    );
+
+    if (k >= 1) {
+      this.cameraTween = null;
+      // 恢复 damping（P12 原值 true），让 tween 之后的手动旋转手感不变
+      this.orbitControls.enableDamping = true;
+    }
   }
 
   /** 设置阴影 */

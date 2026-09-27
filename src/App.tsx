@@ -14,6 +14,7 @@ import { SceneController } from './scene/sceneController.js';
 import { MANUAL_LEVEL_KEY, useProjectStore } from './store/projectStore.js';
 import { ZonePanel } from './ui/panels/ZonePanel.js';
 import { FixturePanel } from './ui/panels/FixturePanel.js';
+import { CameraPanel } from './ui/panels/CameraPanel.js';
 import { ScenePanel } from './ui/panels/ScenePanel.js';
 import { IlluminancePanel } from './ui/panels/IlluminancePanel.js';
 import { RenderPanel } from './ui/panels/RenderPanel.js';
@@ -543,6 +544,9 @@ export default function App() {
         {rightOpen && (
           <div className="sidebar-content">
             <ScenePanel onApplyScene={(key) => controllerRef.current?.applyScene(key)} />
+            <CameraPanel
+              onPresetChange={(key) => engineRef.current?.setCameraPreset(key)}
+            />
             <IlluminancePanel />
             <RenderPanel
               postProcessing={backendType === 'webgl2'}
