@@ -65,7 +65,8 @@ export function buildActivityZone(zone: ActivityZone, selected: boolean): Group 
     new MeshStandardMaterial({
       color: fillColor,
       transparent: true,
-      opacity: selected ? 0.22 : 0.15,
+      // P12：0.15/0.22 → 0.08/0.16，填充更收敛，不与家具抢注意力
+      opacity: selected ? 0.16 : 0.08,
       roughness: 1.0,
       metalness: 0.0,
       depthWrite: false,
@@ -78,10 +79,16 @@ export function buildActivityZone(zone: ActivityZone, selected: boolean): Group 
   fill.receiveShadow = false;
   group.add(fill);
 
-  // 边框线（与填充同平面）
+  // 边框线（与填充同平面）。
+  // P12：加 transparent/opacity（未选中 0.35 / 选中 0.8）——常显但退到背景，
+  // 不再是抢眼的绿/黄工程线框（报告硬伤：调试可视化暴露在主画面）。
   const edges = new LineSegments(
     new EdgesGeometry(planeGeo),
-    new LineBasicMaterial({ color: borderColor }),
+    new LineBasicMaterial({
+      color: borderColor,
+      transparent: true,
+      opacity: selected ? 0.8 : 0.35,
+    }),
   );
   edges.rotation.x = -Math.PI / 2;
   edges.position.y = zone.planeH;

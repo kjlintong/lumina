@@ -215,9 +215,10 @@ export default function App() {
   const [sunset, setSunset] = useState(false);
   const [speed, setSpeed] = useState(0);
   const [shadows, setShadows] = useState(true);
-  // 氛围层开关（P8b）：尘埃粒子 / 体积光柱。默认全开，低端设备可关。
+  // 氛围层开关（P8b）：尘埃粒子 / 体积光柱。尘埃默认开；
+  // P12：体积光柱默认关（伪体积光与后期链 godrays 重复，同开画面糊），可手动打开。
   const [dustVisible, setDustVisible] = useState(true);
-  const [lightShaftVisible, setLightShaftVisible] = useState(true);
+  const [lightShaftVisible, setLightShaftVisible] = useState(false);
 
   // Bloom 光晕参数（WebGL2 后处理，WebGPU 无此功能）
   const [bloom, setBloom] = useState<BloomSettings | null>(null);

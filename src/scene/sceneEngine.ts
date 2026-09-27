@@ -270,8 +270,10 @@ export class SceneEngine {
    * P9：0.15 → 0.28（实测有效不透明度只有 0.080，几乎不可见）。
    */
   private shaftBaseOpacity = 0.6;
-  /** 用户是否要求显示光柱（P8b UI 开关；与太阳高度角渐隐相乘） */
-  private shaftUserEnabled = true;
+  /** 用户是否要求显示光柱（P8b UI 开关；与太阳高度角渐隐相乘）。
+   * P12：默认关闭。伪体积光柱（两片半透明平面）与后期链 godrays（屏幕空间
+   * 真体积光，深度纹理驱动）同时开会让画面糊；保留开关，用户可手动打开。 */
+  private shaftUserEnabled = false;
 
   /**
    * 装饰绿植（P8d）。与房间一样属于静态几何，构造时一次性构建，不参与
@@ -303,12 +305,14 @@ export class SceneEngine {
     // 房间默认 6×4.5×2.8（中心在原点，x∈±3，z∈±2.25），相机放东南角附近
     // 望向房间中心，两个初始活动区（休闲/用餐）都在视野内。
     // 注意：墙是 BoxGeometry 全封闭体积，相机若在房间外会被墙挡住看不到内部。
-    this.camera = new PerspectiveCamera(60, 1, 0.1, 100);
-    this.camera.position.set(2.5, 1.8, 1.9);
+    // P12：fov 60 → 37（35mm 全幅等效垂直角），机位改为平视——pos y=1.55、
+    // target y=1.5，俯仰角 ≈ 2.1°（旧机位俯视 17.6°，工程工具感）。
+    this.camera = new PerspectiveCamera(37, 1, 0.1, 100);
+    this.camera.position.set(1.7, 1.55, 1.6);
 
     // 轨道控制器：鼠标拖拽旋转、滚轮缩放、右键平移
     this.orbitControls = new OrbitControls(this.camera, backend.canvas);
-    this.orbitControls.target.set(0, 0.8, 0);
+    this.orbitControls.target.set(0, 1.5, 0);
     this.orbitControls.enableDamping = true;
     this.orbitControls.dampingFactor = 0.08;
     this.orbitControls.maxDistance = 20;
@@ -449,19 +453,11 @@ export class SceneEngine {
   }
 
   /**
-   * 生成 RoomEnvironment PMREM 环境贴图并赋给 scene.environment。
-   *
-   * PMREMGenerator 依赖 WebGL 内部 API（CubeUV render target / shader），
-   * 仅 WebGL2 后端可用；WebGPU 后端跳过（保留 ambient/hemi 兜底）。
-   * 红线：业务层不直接 new WebGLRenderer，经 backend.getRenderer() 转型。
-   * 测试 mock 的 getRenderer 返回 undefined，同样安全跳过。
-   */
-  /**
    * 构建装饰绿植组。放在窗侧（北墙）角落，承接参考项目的「绿植点缀」：
    * 冷色家具与暖色夕照之间的色彩过渡，并让窗外光影有个可投影的主体。
    *
-   * 位置说明：窗在北墙（z = -depth/2），相机在 (2.5, 1.8, 1.9) 望西北。
-   * 所以 NW 角落（x 负、z 负）最显眼且承接窗外光。这里避开光柱路径
+   * 位置说明：窗在北墙（z = -depth/2），相机在东南角（P12 起为 (1.7, 1.55, 1.6)）
+   * 望西北。所以 NW 角落（x 负、z 负）最显眼且承接窗外光。这里避开光柱路径
    * （窗中心 → 房间中心，即 z = -depth/2 → 0 的对角线），把绿植放在
    * 更靠窗台、更靠边的一侧，让它投影在地板上但不挡光柱。
    */
@@ -479,6 +475,18 @@ export class SceneEngine {
     return group;
   }
 
+  /**
+   * 生成 RoomEnvironment PMREM 环境贴图并赋给 scene.environment。
+   *
+   * PMREMGenerator 依赖 WebGL 内部 API（CubeUV render target / shader），
+   * 仅 WebGL2 后端可用；WebGPU 后端跳过（保留 ambient/hemi 兜底）。
+   * 红线：业务层不直接 new WebGLRenderer，经 backend.getRenderer() 转型。
+   * 测试 mock 的 getRenderer 返回 undefined，同样安全跳过。
+   *
+   * 已知缺口（P12 标注）：WebGPU 路径无 IBL——r186 的 PMREMGenerator 无法跨
+   * 后端复用。要补需走 `three/webgpu` 的 EnvironmentNode 路线（架构级改动），
+   * 留给下阶段，此函数即接入点。
+   */
   private initEnvironment(): void {
     if (this.backend.type !== 'webgl2') return;
     const renderer = this.backend.getRenderer() as WebGLRenderer;
@@ -493,11 +501,12 @@ export class SceneEngine {
       this.scene.environment = rt.texture;
 
       // P9 交付物 4：环境反射只做「细节补充」而非主光。PMREM 会让所有 PBR 面
-      // 都反射环境光，室内白天整体发灰亮（压掉太阳的冷暖对比）。降到 0.35，
-      // 主光交给太阳与灯具。r163+ 支持 `Scene.environmentIntensity`。
+      // 都反射环境光，室内白天整体发灰亮（压掉太阳的冷暖对比）。P12：0.35 → 0.55
+      // 折中——保留 P9 的冷暖对比，同时让 PBR 反射可见（真 GPU 上仍偏灰可再调）。
+      // r163+ 支持 `Scene.environmentIntensity`。
       const sceneWithIntensity = this.scene as Scene & { environmentIntensity?: number };
       if ('environmentIntensity' in this.scene) {
-        sceneWithIntensity.environmentIntensity = 0.35;
+        sceneWithIntensity.environmentIntensity = 0.55;
       }
     } catch {
       // headless / 无 WebGL 上下文等极端环境：跳过环境贴图，不致命
@@ -980,10 +989,10 @@ export class SceneEngine {
     }
   }
 
-  /** 设置相机位置（朝向房间中心工作面高度；同步轨道控制器目标点保持一致） */
+  /** 设置相机位置（朝向房间中心 1.5m 高度，P12 平视；同步轨道控制器目标点保持一致） */
   setCameraPosition(x: number, y: number, z: number): void {
     this.camera.position.set(x, y, z);
-    this.orbitControls.target.set(0, 0.8, 0);
+    this.orbitControls.target.set(0, 1.5, 0);
     this.orbitControls.update();
   }
 

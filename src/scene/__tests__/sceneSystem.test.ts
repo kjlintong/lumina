@@ -150,9 +150,9 @@ describe('SceneSystem.apply()', () => {
     expect(Object.keys(summary.cct).sort()).toEqual(['fx-0', 'fx-1', 'fx-2']);
     for (const f of fixtures) {
       expect(levelOf(f, 'dinner')).toBe(0.65);
-      expect(f.electrical.cct).toBe(2700);
+      expect(f.electrical.cct).toBe(2400);
       expect(summary.levels[f.id]).toEqual({ from: 1, to: 0.65 });
-      expect(summary.cct[f.id]).toEqual({ from: 3000, to: 2700 });
+      expect(summary.cct[f.id]).toEqual({ from: 3000, to: 2400 });
     }
     expect(summary.skipped).toEqual({ levels: [], cct: [] });
     expect(summary.unchanged).toBe(0);
@@ -167,7 +167,7 @@ describe('SceneSystem.apply()', () => {
 
     expect(second.levels).toEqual({});
     expect(second.cct).toEqual({});
-    expect(second.unchanged).toBe(2); // 亮度 0.65 与色温 2700 都已到位
+    expect(second.unchanged).toBe(2); // 亮度 0.65 与色温 2400 都已到位
   });
 
   it('场景只写亮度与色温，不触碰位置 / 姿态 / 形状 / 配光 / 绑定（§6 P5）', () => {
@@ -256,13 +256,18 @@ describe('SceneSystem — user-locked 字段保护（ADR-17）', () => {
     expect(levelOf(fixtures[0]!, 'movie')).toBe(0.15);
     // 被锁灯的亮度表保持原样，未写入场景记录
     expect(fixtures[1]!.control.sceneLevels).toEqual({ preset: 0.42 });
-    expect(byId(fixtures, 'fx-0').electrical.cct).toBe(3000);
-    expect(byId(fixtures, 'fx-1').electrical.cct).toBe(3000);
+    expect(byId(fixtures, 'fx-0').electrical.cct).toBe(2200);
+    expect(byId(fixtures, 'fx-1').electrical.cct).toBe(2200);
     expect(summary.levels).toEqual({ 'fx-0': { from: 1, to: 0.15 } });
-    expect(summary.cct).toEqual({}); // 目标 3000 == 现状 3000，记入 unchanged 而非 delta
+    // 现状 3000K → 目标 2200K，两盏灯的色温都记入 delta；
+    // fx-1 的亮度被锁，只解亮度，色温不受锁定影响。
+    expect(summary.cct).toEqual({
+      'fx-0': { from: 3000, to: 2200 },
+      'fx-1': { from: 3000, to: 2200 },
+    });
     expect(summary.skipped.levels).toEqual(['fx-1']);
     expect(summary.skipped.cct).toEqual([]);
-    expect(summary.unchanged).toBe(2); // 两盏灯的色温都已处于目标值
+    expect(summary.unchanged).toBe(0); // 两盏灯的色温都需改动
   });
 
   it('锁定 electrical.cct 的灯跳过色温，亮度仍正常写入', () => {
@@ -274,7 +279,7 @@ describe('SceneSystem — user-locked 字段保护（ADR-17）', () => {
 
     expect(levelOf(fixtures[0]!, 'dinner')).toBe(0.65);
     expect(levelOf(fixtures[1]!, 'dinner')).toBe(0.65);
-    expect(byId(fixtures, 'fx-0').electrical.cct).toBe(2700);
+    expect(byId(fixtures, 'fx-0').electrical.cct).toBe(2400);
     expect(byId(fixtures, 'fx-1').electrical.cct).toBe(3000);
     expect(summary.cct).not.toHaveProperty('fx-1');
     expect(summary.skipped.cct).toEqual(['fx-1']);
@@ -335,7 +340,7 @@ describe('SceneSystem.applySmooth()', () => {
     expect(t.durationMs).toBe(2000);
     expect(t.from.levels).toEqual({ 'fx-0': 1, 'fx-1': 1 });
     expect(t.to.levels).toEqual({ 'fx-0': 0.15, 'fx-1': 0.15 });
-    expect(t.to.cct).toEqual({ 'fx-0': 3000, 'fx-1': 3000 });
+    expect(t.to.cct).toEqual({ 'fx-0': 2200, 'fx-1': 2200 });
     expect(system.getTransition()).toBe(t);
     expect(fixtures[0]!.control.sceneLevels).toEqual({});
     expect(fixtures[0]!.electrical.cct).toBe(3000);
@@ -394,7 +399,7 @@ describe('SceneSystem.applySmooth()', () => {
     expect(summary).not.toBeNull();
     expect(summary!.sceneKey).toBe('dinner');
     expect(levelOf(fixtures[0]!, 'dinner')).toBe(0.65);
-    expect(fixtures[1]!.electrical.cct).toBe(2700);
+    expect(fixtures[1]!.electrical.cct).toBe(2400);
     expect(system.getTransition()).toBeNull();
     expect(system.sample(0.5)).toBeNull();
     expect(system.getActiveSceneKey()).toBe('dinner');
@@ -518,7 +523,7 @@ describe('SceneSystem.getAppliedState()', () => {
     system.apply('dinner');
     expect(system.getAppliedState()).toEqual({
       levels: { 'fx-0': 0.65, 'fx-1': 0.65 },
-      cct: { 'fx-0': 2700, 'fx-1': 2700 },
+      cct: { 'fx-0': 2400, 'fx-1': 2400 },
     });
   });
 
@@ -555,7 +560,7 @@ describe('SceneSystem.getAppliedState()', () => {
 
     expect(state.levels['fx-0']).toBe(0.15);
     expect(state.levels['fx-1']).toBeUndefined as unknown as number;
-    expect(state.cct['fx-0']).toBe(3000);
+    expect(state.cct['fx-0']).toBe(2200);
     expect(state.cct['fx-1']).toBe(3000);
   });
 });

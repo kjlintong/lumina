@@ -275,7 +275,7 @@ describe('applyScene：写 sceneLevels 且尊重锁定字段（ADR-17）', () =>
 
     const f = fixture(id);
     expect(f.control.sceneLevels['movie']).toBeCloseTo(0.15);
-    expect(f.electrical.cct).toBe(3000); // 观影预设 3000K
+    expect(f.electrical.cct).toBe(2200); // 观影预设 2200K
     expect(useProjectStore.getState().activeSceneKey).toBe('movie');
     expect(useProjectStore.getState().sceneTransition?.key).toBe('movie');
     expect(useProjectStore.getState().sceneTransition?.durationMs).toBe(2000);

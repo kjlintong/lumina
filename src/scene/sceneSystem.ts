@@ -72,21 +72,21 @@ export const PRESET_SCENES: Record<PresetSceneKey, SceneDefinition> = {
     name: '日间',
     transitionMs: 1200,
     levels: { [ALL_FIXTURES]: 0.9 },
-    cct: { [ALL_FIXTURES]: 5000 },
+    cct: { [ALL_FIXTURES]: 5500 },
   },
   dinner: {
     key: 'dinner',
     name: '晚餐',
     transitionMs: 1500,
     levels: { [ALL_FIXTURES]: 0.65 },
-    cct: { [ALL_FIXTURES]: 2700 },
+    cct: { [ALL_FIXTURES]: 2400 },
   },
   movie: {
     key: 'movie',
     name: '观影',
     transitionMs: 2000,
     levels: { [ALL_FIXTURES]: 0.15 },
-    cct: { [ALL_FIXTURES]: 3000 },
+    cct: { [ALL_FIXTURES]: 2200 },
   },
   relax: {
     key: 'relax',
@@ -100,7 +100,7 @@ export const PRESET_SCENES: Record<PresetSceneKey, SceneDefinition> = {
     name: '阅读',
     transitionMs: 900,
     levels: { [ALL_FIXTURES]: 0.95 },
-    cct: { [ALL_FIXTURES]: 4000 },
+    cct: { [ALL_FIXTURES]: 2900 },
   },
   night: {
     key: 'night',

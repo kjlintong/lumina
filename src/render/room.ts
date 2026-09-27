@@ -213,8 +213,9 @@ export function buildRoom(
   } = options;
 
   // 乳胶漆 / 石膏浅灰，高粗糙度无金属度。
+  // P12：墙面 0.95 → 0.90（报告数值），天花独立 0.95（见 makeCeilingMaterial）。
   const surfaceColor = 0xe6e6e6;
-  const surfaceRoughness = 0.95;
+  const surfaceRoughness = 0.9;
   const surfaceMetalness = 0.0;
 
   // 墙面法线贴图（jsdom 下为 null → 跳过 normalMap，保持纯色墙面）
@@ -231,10 +232,13 @@ export function buildRoom(
     }
     return m;
   };
-  const makeSurfaceMaterial = (): MeshStandardMaterial =>
+  // P12：天花独立材质（旧实现复用 makeSurfaceMaterial，跟墙面同粗糙度）。
+  // roughness 0.95 高于墙面 0.90，保持较高反射以承接「天花最亮」的层次；
+  // 颜色仍用 surfaceColor（报告未要求改色），不加 normalMap（旧行为保留）。
+  const makeCeilingMaterial = (): MeshStandardMaterial =>
     new MeshStandardMaterial({
       color: surfaceColor,
-      roughness: surfaceRoughness,
+      roughness: 0.95,
       metalness: surfaceMetalness,
     });
 
@@ -242,7 +246,7 @@ export function buildRoom(
   // P8a：木地板。有贴图时 color 置白让贴图显色；无贴图（jsdom）用木色兜底。
   const floorMaterial = new MeshStandardMaterial({
     color: 0xffffff,
-    roughness: 0.7,
+    roughness: 0.4, // P12：0.7 → 0.40（橡木地板区间中值，太阳斜射时出现高光带）
     metalness: 0.0,
   });
   const floorTex = floorTexture ?? makeWoodFloorTexture();
@@ -260,7 +264,7 @@ export function buildRoom(
   floor.castShadow = false;
 
   // 天花板（xz 平面，y=height）。法线经 rotation.x = +PI/2 转为 -Y（朝房间内部）。
-  const ceiling = new Mesh(new PlaneGeometry(width, depth), makeSurfaceMaterial());
+  const ceiling = new Mesh(new PlaneGeometry(width, depth), makeCeilingMaterial());
   ceiling.rotation.x = Math.PI / 2;
   ceiling.position.y = height;
   ceiling.receiveShadow = true;
