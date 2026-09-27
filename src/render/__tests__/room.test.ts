@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Mesh, MeshPhysicalMaterial } from 'three';
+import { CanvasTexture, Mesh, MeshPhysicalMaterial } from 'three';
 
 import { buildRoom } from '../room.js';
 
@@ -72,19 +72,25 @@ describe('buildRoom — 房间外壳构建', () => {
     }
   });
 
-  it('withWindow: true 时产生 ≥1 面玻璃，且玻璃为透明材质（室外可见）', () => {
+  it('withWindow: true 时产生 ≥1 面玻璃，玻璃用 transmission 物理透光（室外可见）', () => {
     const { windows, windowFrame } = buildRoom(5, 4, 2.8, { withWindow: true });
     expect(windows.length).toBeGreaterThanOrEqual(1);
     expect(windowFrame.length).toBeGreaterThanOrEqual(1);
     const glass = windows[0]!;
     const mat = glass.material as MeshPhysicalMaterial;
     expect(mat).toBeInstanceOf(MeshPhysicalMaterial);
-    // 必须透明：室外天空/太阳圆盘才能从窗口透出（P8a 死白窗根因）
+    // transmission 走独立 transmissionRenderTarget（WebGLMaterials.refreshUniformsPhysical），
+    // 与 transparent 完全无关——渲染器先把场景渲到 RT，物理材质再采样该 RT 做折射。
+    // P8a「死白窗」的根因是当时**没用 transmission**、只用 opacity 0.12 的半透明白板，
+    // 那是「没用 transmission」的后果，而非它的副作用。P14 推翻旧的 transmission===0 断言。
+    expect(mat.transmission).toBe(1.0);
+    expect(mat.ior).toBe(1.5);
+    expect(mat.thickness).toBe(0.01);
+    expect(mat.roughness).toBe(0.05);
+    // transparent 保留（无害，保证 transparent pass 正确排序），但 opacity 必须为 1.0——
+    // 低 opacity 会把折射结果再按 alpha 压淡一遍。
     expect(mat.transparent).toBe(true);
-    expect(mat.opacity).toBeLessThan(0.5);
-    // 不得用 transmission：它只在 transparent=true 时生效，而旧实现的
-    // `transmission + transparent:false` 组合会让玻璃退化成纯白不透明面。
-    expect(mat.transmission ?? 0).toBe(0);
+    expect(mat.opacity).toBe(1.0);
     // renderOrder > 0：后画，保证混合时室外内容不被室内物体盖住
     expect(glass.renderOrder).toBeGreaterThan(0);
   });
@@ -103,5 +109,39 @@ describe('buildRoom — 房间外壳构建', () => {
     const { group } = buildRoom(5, 4, 2.8, { withWindow: true });
     expect(group.children).toHaveLength(6);
     expect(group.getObjectByName('window-north')).toBeDefined();
+  });
+
+  // ---------------------------------------------------------------------------
+  // P14：橡木地板三件套（map + normalMap + roughnessMap）+ clearcoat
+  // ---------------------------------------------------------------------------
+
+  it('地板：MeshPhysicalMaterial，roughness ∈ [0.35, 0.45]，clearcoat === 0.15（清漆层）', () => {
+    const { floor } = buildRoom(5, 4, 2.8);
+    const mat = floor.material as MeshPhysicalMaterial;
+    // MeshPhysicalMaterial extends MeshStandardMaterial：既有 instanceof
+    // MeshStandardMaterial 的用法不受影响；但必须是 Physical 才有 clearcoat。
+    expect(mat).toBeInstanceOf(MeshPhysicalMaterial);
+    expect(mat.roughness).toBeGreaterThanOrEqual(0.35);
+    expect(mat.roughness).toBeLessThanOrEqual(0.45);
+    expect(mat.clearcoat).toBe(0.15);
+    expect(mat.clearcoatRoughness).toBe(0.4);
+  });
+
+  it('地板：注入 normalMap / roughnessMap 后接线生效（jsdom 工厂返回 null，故用注入测接线）', () => {
+    // jsdom 里 canvas.getContext('2d') 返回 null，makeWoodFloorNormalTexture 等
+    // 工厂返回 null——因此这里注入 mock CanvasTexture 来验证「贴图被接到材质上」，
+    // 而非断言工厂产物（红线 #8：贴图生成不进单测主路径）。
+    const normalTex = new CanvasTexture(document.createElement('canvas'));
+    const roughnessTex = new CanvasTexture(document.createElement('canvas'));
+    const { floor } = buildRoom(5, 4, 2.8, {
+      withWindow: true,
+      floorNormalTexture: normalTex,
+      floorRoughnessTexture: roughnessTex,
+    });
+    const mat = floor.material as MeshPhysicalMaterial;
+    expect(mat.normalMap).toBe(normalTex);
+    expect(mat.roughnessMap).toBe(roughnessTex);
+    expect(mat.normalScale.x).toBeCloseTo(0.6);
+    expect(mat.normalScale.y).toBeCloseTo(0.6);
   });
 });

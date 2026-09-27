@@ -29,9 +29,10 @@
  * 中等粗糙度（家具反射率 0.2-0.7 的中间档）。
  */
 
-import { BoxGeometry, Group, Mesh, MeshStandardMaterial } from 'three';
-import type { Material } from 'three';
+import { BoxGeometry, Group, Mesh, MeshStandardMaterial, Vector2 } from 'three';
+import type { CanvasTexture, Material } from 'three';
 import type { ActivityZone } from '../core/types.js';
+import { makeFabricNormalTexture, makeFabricTexture } from './materials.js';
 
 /** 在 group 内放一个底面落在 yBottom 的方块，返回 Mesh（统一开启阴影） */
 function part(
@@ -90,11 +91,19 @@ function armchair(
   part(group, armW, 0.18, d, x + w / 2 - armW / 2, seatH, z, material); // 右扶手
 }
 
+/** 家具构建可选参数（P14：贴图注入，供测试与 jsdom 兜底） */
+export interface FurnitureBuildOptions {
+  /** 布艺颜色贴图（可选注入；缺省调用 makeFabricTexture()，jsdom 返回 null 时跳过） */
+  fabricTexture?: CanvasTexture | null;
+  /** 布艺法线贴图（可选注入；缺省调用 makeFabricNormalTexture()，jsdom 返回 null 时跳过） */
+  fabricNormalTexture?: CanvasTexture | null;
+}
+
 /**
  * 按活动区类型构建家具 Group。
  * group 携带 zone.pos（y=0）与 zone.rotY；子 mesh 用局部坐标、底面贴地。
  */
-export function buildFurniture(zone: ActivityZone): Group {
+export function buildFurniture(zone: ActivityZone, options: FurnitureBuildOptions = {}): Group {
   const group = new Group();
   group.name = `furniture:${zone.key}`;
   group.position.set(zone.pos[0], 0, zone.pos[1]);
@@ -102,7 +111,16 @@ export function buildFurniture(zone: ActivityZone): Group {
 
   // 木色 / 布色 / 石色：中等粗糙度，漫反射为主（家具反射率 0.2-0.7 的中间档）
   const wood = new MeshStandardMaterial({ color: 0x8a6a45, roughness: 0.75, metalness: 0.0 });
+  // P14：布艺接布纹 albedo（map）+ 织纹法线（normalMap）。材质创建一次、
+  // 被本组多个部件共享（不每件重建）。jsdom 下工厂返回 null → 跳过贴图。
   const fabric = new MeshStandardMaterial({ color: 0x6f7f8f, roughness: 0.95, metalness: 0.0 });
+  const fabTex = options.fabricTexture ?? makeFabricTexture(0x6f7f8f);
+  if (fabTex) fabric.map = fabTex;
+  const fabNormal = options.fabricNormalTexture ?? makeFabricNormalTexture();
+  if (fabNormal) {
+    fabric.normalMap = fabNormal;
+    fabric.normalScale = new Vector2(0.5, 0.5); // 布纹起伏，比墙面乳胶漆明显
+  }
   const stone = new MeshStandardMaterial({ color: 0xd8d8d8, roughness: 0.5, metalness: 0.0 });
 
   const [w, d] = zone.size;

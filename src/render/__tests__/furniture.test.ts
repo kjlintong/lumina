@@ -10,8 +10,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { Mesh } from 'three';
-import type { BoxGeometry, Group } from 'three';
+import { CanvasTexture, Mesh } from 'three';
+import type { BoxGeometry, Group, MeshStandardMaterial } from 'three';
 
 import { ACTIVITY_ZONE_TYPES } from '../../core/types.js';
 import { makeZone } from '../../core/zoneTypes.js';
@@ -73,5 +73,27 @@ describe('buildFurniture — 基础家具上下文', () => {
         expect(Math.abs(mesh.position.z) + halfD).toBeLessThanOrEqual(d / 2 + 1e-6);
       }
     }
+  });
+
+  it('布艺材质：roughness 0.95，注入 map / normalMap 后接线生效（布纹 albedo + 织纹法线）', () => {
+    // jsdom 里 canvas.getContext('2d') 返回 null，makeFabricTexture 等工厂返回
+    // null——因此注入 mock CanvasTexture 验证接线，而非断言工厂产物（红线 #8）。
+    const mapTex = new CanvasTexture(document.createElement('canvas'));
+    const normalTex = new CanvasTexture(document.createElement('canvas'));
+    const group = buildFurniture(makeZone('lounge', [0, 0]), {
+      fabricTexture: mapTex,
+      fabricNormalTexture: normalTex,
+    });
+    // 布艺材质：roughness 0.95 的 sofa/扶手部件
+    const fabricMesh = meshesOf(group).find(
+      (m) => (m.material as MeshStandardMaterial).roughness === 0.95,
+    );
+    expect(fabricMesh).toBeDefined();
+    const mat = fabricMesh!.material as MeshStandardMaterial;
+    expect(mat.roughness).toBe(0.95);
+    expect(mat.map).toBe(mapTex);
+    expect(mat.normalMap).toBe(normalTex);
+    expect(mat.normalScale.x).toBeCloseTo(0.5);
+    expect(mat.normalScale.y).toBeCloseTo(0.5);
   });
 });

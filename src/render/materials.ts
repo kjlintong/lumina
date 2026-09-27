@@ -111,6 +111,90 @@ export function woodFloorColor(
 }
 
 /**
+ * 计算木地板法线贴图某一点的颜色。纯函数。
+ *
+ * 结构（与 woodFloorColor 的板缝位置严格对齐，同一 (u,v,plank) 约定）：
+ * - 板缝处（v 接近 0 / 1）：强凹陷法线偏移（ty 大），模拟板与板之间的缝隙深度。
+ * - 板内：沿板长方向（u）的细木纹低频起伏，幅度小。
+ *
+ * 法线编码约定与 wallNormalColor 相同：R/G 编码 x/y 偏移（128 = 中性），
+ * B 由 (tx, ty) 反推、恒接近 255（朝外）。板缝凹陷幅度取 0.35，仍保证
+ * B ∈ [230, 255]。
+ *
+ * @param u 板内横向坐标 0..1（沿板长）  @param v 板内纵向坐标 0..1（跨板宽）
+ * @param plank 当前板索引
+ * @returns { r, g, b } 0..255
+ */
+export function woodFloorNormalColor(
+  u: number,
+  v: number,
+  plank: number,
+): { r: number; g: number; b: number } {
+  // 板缝凹陷：edgeDist=0 在缝上，0.5 在板中央。gap 在缝边为 1、约 0.08 板宽内衰减到 0。
+  const edgeDist = Math.min(v, 1 - v);
+  const gap = Math.max(0, 1 - edgeDist / 0.08);
+  // 凹陷倾斜方向：缝两侧的板各自朝缝内倾（v<0.5 朝 +y，v>0.5 朝 -y）
+  const side = v < 0.5 ? 1 : -1;
+  const ty = gap * 0.35 * side;
+  // 板内木纹：沿板长（u）的低频起伏，板缝处被凹陷主导（乘 1-gap）
+  const grain = Math.sin(u * 25 + plank * 1.7) * 0.5 + Math.sin(u * 60 + plank * 3.1) * 0.5;
+  const tx = grain * 0.05 * (1 - gap);
+  const tz = Math.sqrt(Math.max(0, 1 - tx * tx - ty * ty));
+  return {
+    r: clamp255(128 + tx * 255),
+    g: clamp255(128 + ty * 255),
+    b: clamp255(tz * 255),
+  };
+}
+
+/**
+ * 计算木地板粗糙度贴图某一点的灰度。纯函数。
+ *
+ * three.js 里 roughnessMap 是**乘**在标量 roughness 上的，因此贴图以接近
+ * 1.0（≈235）为基准：板内略粗（木纹方向微变），板缝处更光滑（更暗）。
+ * 输出单通道灰度写入 R/G/B；作为数据贴图须用 NoColorSpace（线性空间）。
+ *
+ * @returns { r, g, b } 0..255，三通道同值
+ */
+export function woodFloorRoughnessColor(
+  u: number,
+  v: number,
+  plank: number,
+): { r: number; g: number; b: number } {
+  const edgeDist = Math.min(v, 1 - v);
+  // 板内基准 0.92，木纹沿板长（u）微变 ±0.05
+  const grain = Math.sin(u * 30 + plank * 2.3) * 0.5 + Math.sin(u * 75 + v * 20) * 0.5;
+  let rough = 0.92 + grain * 0.05;
+  // 板缝更光滑：缝隙处乘数降到 0.7（有效粗糙度更低 → 高光带）
+  if (edgeDist < 0.06) rough = 0.7;
+  const c = clamp255(rough * 255);
+  return { r: c, g: c, b: c };
+}
+
+/**
+ * 计算布料法线贴图某一点的颜色。纯函数。
+ *
+ * 织物经纬纹的法线化：x 向经纱起伏 + y 向纬纱起伏（sin(x)·cos(y) 型织纹，
+ * 两方向交错凸起）。编码约定同 wallNormalColor；幅度（0.08）比墙面乳胶漆
+ * （0.03）明显大一档——布纹比乳胶漆明显——但仍保证 B ∈ [230, 255]。
+ *
+ * @param x 像素 x 坐标  @param y 像素 y 坐标
+ * @returns { r, g, b } 0..255
+ */
+export function fabricNormalColor(x: number, y: number): { r: number; g: number; b: number } {
+  const nx = Math.sin(x * 1.9) * Math.cos(y * 0.4);
+  const ny = Math.sin(y * 1.9) * Math.cos(x * 0.4);
+  const tx = nx * 0.08;
+  const ty = ny * 0.08;
+  const tz = Math.sqrt(Math.max(0, 1 - tx * tx - ty * ty));
+  return {
+    r: clamp255(128 + tx * 255),
+    g: clamp255(128 + ty * 255),
+    b: clamp255(tz * 255),
+  };
+}
+
+/**
  * 计算墙面法线贴图某一点的颜色。纯函数。
  *
  * 法线贴图约定：R/G 编码法线的 x/y 偏移（0.5 = 中性），B 恒接近 1（朝外）。
@@ -152,32 +236,44 @@ function create2D(size: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderi
 }
 
 /**
- * 生成木地板 CanvasTexture（SRGB 颜色贴图，RepeatWrapping）。
- * canvas 不可用时返回 null。
+ * 木地板贴图的几何布局（板数 / 板高 px / 每板相位偏移 / repeat）。
+ * 颜色、法线、粗糙度三张贴图必须共用同一布局，板缝位置才能逐像素对齐。
  */
-export function makeWoodFloorTexture(settings: WoodFloorSettings = {}): CanvasTexture | null {
-  const {
-    plankWidth = 0.16,
-    baseColor = 0x9c7048,
-    resolution = 512,
-    repeat = 3,
-    seed = 12345,
-  } = settings;
+interface WoodFloorLayout {
+  resolution: number;
+  planksPerTile: number;
+  plankHeightPx: number;
+  plankOffset: number[];
+  repeat: number;
+}
 
-  const made = create2D(resolution);
-  if (!made) return null;
-  const { canvas, ctx } = made;
-
+/** 由 WoodFloorSettings 推出贴图布局（算法与 P8a 定版完全一致，勿改） */
+function woodFloorLayout(settings: WoodFloorSettings): WoodFloorLayout {
+  const { plankWidth = 0.16, resolution = 512, repeat = 3, seed = 12345 } = settings;
   // 约定：一个贴图 tile 覆盖约 2m 进深，由此推每 tile 的板数与板高（px）。
   // 精确物理尺寸不重要（视觉贴图），只要板细长、数量合理即可。
   const tileMeters = 2.0;
   const planksPerTile = Math.max(1, Math.round(tileMeters / plankWidth));
   const plankHeightPx = resolution / planksPerTile;
-
   // 固定 seed → 同一贴图可复现；用于每块板的横向纹理相位偏移，避免板间纹理对齐
   const rnd = mulberry32(seed);
   const plankOffset: number[] = [];
   for (let p = 0; p < planksPerTile; p++) plankOffset.push(rnd());
+  return { resolution, planksPerTile, plankHeightPx, plankOffset, repeat };
+}
+
+/**
+ * 按布局逐像素填充木地板画布。canvas 不可用时返回 null。
+ * 三张贴图（颜色 / 法线 / 粗糙度）共用此函数，仅逐像素求值函数不同。
+ */
+function fillWoodFloor(
+  layout: WoodFloorLayout,
+  colorAt: (u: number, v: number, plank: number) => { r: number; g: number; b: number },
+): HTMLCanvasElement | null {
+  const made = create2D(layout.resolution);
+  if (!made) return null;
+  const { canvas, ctx } = made;
+  const { resolution, planksPerTile, plankHeightPx, plankOffset } = layout;
 
   const img = ctx.createImageData(resolution, resolution);
   const data = img.data;
@@ -187,7 +283,7 @@ export function makeWoodFloorTexture(settings: WoodFloorSettings = {}): CanvasTe
     const uOff = plankOffset[plank] ?? 0;
     for (let px = 0; px < resolution; px++) {
       const u = fract(px / resolution + uOff); // 沿板长 0..1（带板相位偏移）
-      const { r, g, b } = woodFloorColor(u, v, plank, baseColor);
+      const { r, g, b } = colorAt(u, v, plank);
       const i = (py * resolution + px) * 4;
       data[i] = r;
       data[i + 1] = g;
@@ -196,14 +292,59 @@ export function makeWoodFloorTexture(settings: WoodFloorSettings = {}): CanvasTe
     }
   }
   ctx.putImageData(img, 0, 0);
+  return canvas;
+}
 
+/** 数据贴图（法线 / 粗糙度）通用封装：NoColorSpace + RepeatWrapping + repeat */
+function makeDataTexture(canvas: HTMLCanvasElement, repeat: number): CanvasTexture {
   const tex = new CanvasTexture(canvas);
   tex.wrapS = RepeatWrapping;
   tex.wrapT = RepeatWrapping;
   tex.repeat.set(repeat, repeat);
+  tex.colorSpace = NoColorSpace; // 数据贴图用线性空间
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/**
+ * 生成木地板 CanvasTexture（SRGB 颜色贴图，RepeatWrapping）。
+ * canvas 不可用时返回 null。
+ */
+export function makeWoodFloorTexture(settings: WoodFloorSettings = {}): CanvasTexture | null {
+  const { baseColor = 0x9c7048 } = settings;
+  const layout = woodFloorLayout(settings);
+  const canvas = fillWoodFloor(layout, (u, v, plank) => woodFloorColor(u, v, plank, baseColor));
+  if (!canvas) return null;
+
+  const tex = new CanvasTexture(canvas);
+  tex.wrapS = RepeatWrapping;
+  tex.wrapT = RepeatWrapping;
+  tex.repeat.set(layout.repeat, layout.repeat);
   tex.colorSpace = SRGBColorSpace; // 颜色贴图必须 SRGB
   tex.anisotropy = 4;
   return tex;
+}
+
+/**
+ * 生成木地板法线 CanvasTexture（线性 NoColorSpace，RepeatWrapping）。
+ * 与 makeWoodFloorTexture 共用布局，板缝位置逐像素对齐。canvas 不可用时返回 null。
+ */
+export function makeWoodFloorNormalTexture(settings: WoodFloorSettings = {}): CanvasTexture | null {
+  const layout = woodFloorLayout(settings);
+  const canvas = fillWoodFloor(layout, woodFloorNormalColor);
+  if (!canvas) return null;
+  return makeDataTexture(canvas, layout.repeat);
+}
+
+/**
+ * 生成木地板粗糙度 CanvasTexture（线性 NoColorSpace，RepeatWrapping）。
+ * 与 makeWoodFloorTexture 共用布局，板缝位置逐像素对齐。canvas 不可用时返回 null。
+ */
+export function makeWoodFloorRoughnessTexture(settings: WoodFloorSettings = {}): CanvasTexture | null {
+  const layout = woodFloorLayout(settings);
+  const canvas = fillWoodFloor(layout, woodFloorRoughnessColor);
+  if (!canvas) return null;
+  return makeDataTexture(canvas, layout.repeat);
 }
 
 /**
@@ -271,3 +412,43 @@ export function makeFabricTexture(baseColor: number, resolution = 256): CanvasTe
   tex.anisotropy = 4;
   return tex;
 }
+
+/**
+ * 生成布料法线 CanvasTexture（线性 NoColorSpace，RepeatWrapping）。
+ * 法线贴图不吃颜色，因此与 makeWallNormalTexture 一样不带 baseColor 参数。
+ * canvas 不可用时返回 null。
+ */
+export function makeFabricNormalTexture(resolution = 256): CanvasTexture | null {
+  const made = create2D(resolution);
+  if (!made) return null;
+  const { canvas, ctx } = made;
+
+  const img = ctx.createImageData(resolution, resolution);
+  const data = img.data;
+  for (let py = 0; py < resolution; py++) {
+    for (let px = 0; px < resolution; px++) {
+      const { r, g, b } = fabricNormalColor(px, py);
+      const i = (py * resolution + px) * 4;
+      data[i] = r;
+      data[i + 1] = g;
+      data[i + 2] = b;
+      data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  const tex = new CanvasTexture(canvas);
+  tex.wrapS = RepeatWrapping;
+  tex.wrapT = RepeatWrapping;
+  tex.colorSpace = NoColorSpace; // 法线贴图是数据贴图，用线性空间
+  tex.anisotropy = 4;
+  return tex;
+}
+
+// ---------------------------------------------------------------------------
+// P14 跳过项：混凝土
+// 材质最小包规格列了 6 张表面含混凝土（roughness 0.70 + 微 normal），但当前
+// 场景**没有任何混凝土表面**（地面是木地板，墙是乳胶漆，无清水混凝土墙面）。
+// 不凭空造混凝土几何体凑数（红线 #7）。若未来引入混凝土表面，在此补
+// concreteColor / concreteNormalColor 纯函数 + 对应工厂即可。
+// ---------------------------------------------------------------------------

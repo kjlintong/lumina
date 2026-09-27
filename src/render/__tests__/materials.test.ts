@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { hexToRgb, mulberry32, wallNormalColor, woodFloorColor } from '../materials.js';
+import {
+  fabricNormalColor,
+  hexToRgb,
+  mulberry32,
+  wallNormalColor,
+  woodFloorColor,
+  woodFloorNormalColor,
+  woodFloorRoughnessColor,
+} from '../materials.js';
 
 // 注意：jsdom 里 canvas.getContext('2d') 返回 null，因此这里**只测纯函数**，
 // 不调用 makeWoodFloorTexture / makeWallNormalTexture / makeFabricTexture
@@ -81,6 +89,77 @@ describe('wallNormalColor — 墙面法线（纯函数）', () => {
         expect(Math.abs(g - 128)).toBeLessThanOrEqual(12);
       }
     }
+  });
+});
+
+describe('woodFloorNormalColor — 木地板法线（纯函数）', () => {
+  it('b 通道恒在 [230, 255]（单位法线编码，B 接近 1）', () => {
+    for (let plank = 0; plank < 5; plank++) {
+      for (let u = 0; u <= 1; u += 0.05) {
+        for (let v = 0; v <= 1; v += 0.05) {
+          const { b } = woodFloorNormalColor(u, v, plank);
+          expect(b).toBeGreaterThanOrEqual(230);
+          expect(b).toBeLessThanOrEqual(255);
+        }
+      }
+    }
+  });
+
+  it('板缝处（v≈0）法线偏移大于板中央（v=0.5）（板缝凹陷）', () => {
+    const offset = (c: { r: number; g: number }): number => Math.hypot(c.r - 128, c.g - 128);
+    const edge = woodFloorNormalColor(0.5, 0.0, 2);
+    const center = woodFloorNormalColor(0.5, 0.5, 2);
+    expect(offset(edge)).toBeGreaterThan(offset(center));
+  });
+});
+
+describe('woodFloorRoughnessColor — 木地板粗糙度（纯函数）', () => {
+  it('输出各通道都在 [0, 255]，且 R/G/B 同值（灰度）', () => {
+    for (let plank = 0; plank < 5; plank++) {
+      for (let u = 0; u <= 1; u += 0.1) {
+        for (let v = 0; v <= 1; v += 0.1) {
+          const { r, g, b } = woodFloorRoughnessColor(u, v, plank);
+          for (const c of [r, g, b]) {
+            expect(c).toBeGreaterThanOrEqual(0);
+            expect(c).toBeLessThanOrEqual(255);
+          }
+          expect(r).toBe(g);
+          expect(g).toBe(b);
+        }
+      }
+    }
+  });
+
+  it('板缝处（v≈0）比板中央（v=0.5）更低（更光滑 → 高光带）', () => {
+    const edge = woodFloorRoughnessColor(0.5, 0.0, 2);
+    const center = woodFloorRoughnessColor(0.5, 0.5, 2);
+    expect(edge.r).toBeLessThan(center.r);
+  });
+});
+
+describe('fabricNormalColor — 布料法线（纯函数）', () => {
+  it('b 通道恒在 [230, 255]（单位法线编码，B 接近 1）', () => {
+    for (let y = 0; y < 256; y += 7) {
+      for (let x = 0; x < 256; x += 7) {
+        const { b } = fabricNormalColor(x, y);
+        expect(b).toBeGreaterThanOrEqual(230);
+        expect(b).toBeLessThanOrEqual(255);
+      }
+    }
+  });
+
+  it('r/g 围绕 128 波动且幅度大于 wallNormalColor（布纹比乳胶漆明显）', () => {
+    let fabricMax = 0;
+    let wallMax = 0;
+    for (let y = 0; y < 256; y += 3) {
+      for (let x = 0; x < 256; x += 3) {
+        const f = fabricNormalColor(x, y);
+        const w = wallNormalColor(x, y);
+        fabricMax = Math.max(fabricMax, Math.abs(f.r - 128), Math.abs(f.g - 128));
+        wallMax = Math.max(wallMax, Math.abs(w.r - 128), Math.abs(w.g - 128));
+      }
+    }
+    expect(fabricMax).toBeGreaterThan(wallMax);
   });
 });
 

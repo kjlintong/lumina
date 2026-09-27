@@ -11,8 +11,9 @@
  * 坐标系约定（与领域模型 §5 一致）：房间中心位于世界原点，
  * x = 东西，z = 南北，y 向上。
  *
- * 材质选择：地面 / 墙体 / 天花板统一使用 MeshStandardMaterial
- * （高粗糙度、无金属度）。用 PBR 材质而非默认的 MeshBasicMaterial 是关键 ——
+ * 材质选择：墙体 / 天花板用 MeshStandardMaterial，地面（橡木地板 + 清漆层）
+ * 与玻璃（transmission）用 MeshPhysicalMaterial（高粗糙度、无金属度）。
+ * 用 PBR 材质而非默认的 MeshBasicMaterial 是关键 ——
  * MeshBasicMaterial 完全忽略光照，会把物理光全部吃掉，场景将一片死色。
  *
  * 阴影策略（配合 backend.ts 中 renderer.shadowMap.enabled = true）：
@@ -43,7 +44,12 @@ import {
   Vector2,
 } from 'three';
 import type { CanvasTexture } from 'three';
-import { makeWallNormalTexture, makeWoodFloorTexture } from './materials.js';
+import {
+  makeWallNormalTexture,
+  makeWoodFloorNormalTexture,
+  makeWoodFloorRoughnessTexture,
+  makeWoodFloorTexture,
+} from './materials.js';
 
 /** 房间构建结果 */
 export interface RoomBuildResult {
@@ -76,6 +82,10 @@ export interface RoomBuildOptions {
   windowSill?: number;
   /** 地板木纹贴图（可选注入；缺省调用 makeWoodFloorTexture()，jsdom 返回 null 时跳过） */
   floorTexture?: CanvasTexture | null;
+  /** 地板法线贴图（可选注入；缺省调用 makeWoodFloorNormalTexture()，jsdom 返回 null 时跳过） */
+  floorNormalTexture?: CanvasTexture | null;
+  /** 地板粗糙度贴图（可选注入；缺省调用 makeWoodFloorRoughnessTexture()，jsdom 返回 null 时跳过） */
+  floorRoughnessTexture?: CanvasTexture | null;
   /** 墙面法线贴图（可选注入；缺省调用 makeWallNormalTexture()，jsdom 返回 null 时跳过） */
   wallNormalTexture?: CanvasTexture | null;
 }
@@ -98,8 +108,11 @@ interface NorthWindowAssembly {
  * 构建北墙落地窗构件。所有子 mesh 用房间世界坐标（group 置于原点）。
  *
  * 玻璃用 MeshPhysicalMaterial.transmission 表达「透光但保留反射」：
- * transmission 模式不需要 transparent=true。若目标设备上 transmission
- * 性能不可接受，退化为 `transparent: true, opacity: 0.08` 的薄玻璃（见下注释）。
+ * transmission 走**独立的 transmissionRenderTarget**（渲染器先把场景渲到
+ * 一个 RT，物理材质再经 transmissionSamplerMap 采样该 RT 做折射），与
+ * `transparent` 标志完全无关。这里仍保留 `transparent: true`（无害，且保证
+ * transparent pass 正确排序），但 `opacity` 保持 1.0——低 opacity 会把折射
+ * 结果再按 alpha 压淡一遍。
  */
 function buildNorthWindow(
   width: number,
@@ -159,17 +172,22 @@ function buildNorthWindow(
   // 走同一个 bar 工厂函数，继承 castShadow/receiveShadow 与 frame 数组登记。
   bar(frameT, windowHeight, 0, winCenterY);
 
-  // 玻璃：透明平面。
-  // 注意：不能用 `MeshPhysicalMaterial.transmission` —— 它**必须**配合
-  // `transparent: true` 才有视觉效果，否则会被忽略，玻璃退化成一块纯白
-  // 不透明面（这就是 P8a 遗留的「死白窗」根因）。直接 `transparent: true`
-  // + 极低 opacity：室外天空背板与太阳圆盘从窗口透出，窗框与窗台投出阴影。
+  // 玻璃：transmission 物理透光平面。
+  // transmission 走独立 transmissionRenderTarget，与 transparent 无关——
+  // P8a 的「死白窗」根因是当时**没有用 transmission**，只用了 opacity 0.12
+  // 的半透明白板，那是「没用 transmission」的后果，而非它的副作用。
+  // 这里 transmission=1.0 + ior=1.5 + thickness=0.01：室外天空/太阳圆盘经
+  // 折射透入室内；roughness 0.05 让玻璃接近镜面。保留 transparent:true
+  // （保证 transparent pass 排序），但 opacity=1.0，避免把折射结果再压淡。
   const glassMaterial = new MeshPhysicalMaterial({
-    color: 0xbfd8ff,
+    color: 0xffffff,
     metalness: 0.0,
     roughness: 0.05,
+    transmission: 1.0,
+    ior: 1.5,
+    thickness: 0.01,
     transparent: true,
-    opacity: 0.12,
+    opacity: 1.0,
   });
   const glass = new Mesh(new PlaneGeometry(windowWidth, windowHeight), glassMaterial);
   glass.position.set(0, winCenterY, z);
@@ -209,6 +227,8 @@ export function buildRoom(
     windowHeight = height * 0.8,
     windowSill = 0.25,
     floorTexture,
+    floorNormalTexture,
+    floorRoughnessTexture,
     wallNormalTexture,
   } = options;
 
@@ -244,16 +264,31 @@ export function buildRoom(
 
   // 地板（xz 平面，y=0）。法线经 rotation.x = -PI/2 由 +Z 转为 +Y（朝上）。
   // P8a：木地板。有贴图时 color 置白让贴图显色；无贴图（jsdom）用木色兜底。
-  const floorMaterial = new MeshStandardMaterial({
+  // P14：升级为 MeshPhysicalMaterial 以支持 clearcoat（橡木清漆层）。
+  // MeshPhysicalMaterial extends MeshStandardMaterial，既有 instanceof
+  // MeshStandardMaterial 断言不受影响。三件套（map + normalMap + roughnessMap）
+  // 共用同一板缝布局，逐像素对齐。
+  const floorMaterial = new MeshPhysicalMaterial({
     color: 0xffffff,
-    roughness: 0.4, // P12：0.7 → 0.40（橡木地板区间中值，太阳斜射时出现高光带）
+    roughness: 0.4, // P12：橡木地板区间中值（0.35–0.45），太阳斜射时出现高光带
     metalness: 0.0,
+    clearcoat: 0.15, // P14：橡木表面清漆层
+    clearcoatRoughness: 0.4,
   });
   const floorTex = floorTexture ?? makeWoodFloorTexture();
   if (floorTex) {
     floorMaterial.map = floorTex;
   } else {
     floorMaterial.color.setHex(0x9c7048);
+  }
+  const floorNormalTex = floorNormalTexture ?? makeWoodFloorNormalTexture();
+  if (floorNormalTex) {
+    floorMaterial.normalMap = floorNormalTex;
+    floorMaterial.normalScale = new Vector2(0.6, 0.6); // 板缝凹陷 + 板内细木纹
+  }
+  const floorRoughnessTex = floorRoughnessTexture ?? makeWoodFloorRoughnessTexture();
+  if (floorRoughnessTex) {
+    floorMaterial.roughnessMap = floorRoughnessTex; // 板缝更光滑 → 高光带
   }
   floorMaterial.displacementScale = 0; // 不需要位移
   const floor = new Mesh(new PlaneGeometry(width, depth), floorMaterial);
