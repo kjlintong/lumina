@@ -11,6 +11,7 @@ import { preloadIESFiles } from './render/iesCache.js';
 import { serializeProject, deserializeProject } from './core/serialize.js';
 import { SceneEngine } from './scene/sceneEngine.js';
 import { SceneController } from './scene/sceneController.js';
+import { modelToRoomDims } from './render/modelPlanLayout.js';
 import { MANUAL_LEVEL_KEY, useProjectStore } from './store/projectStore.js';
 import {
   readProfessionalMode,
@@ -25,6 +26,7 @@ import { IlluminancePanel } from './ui/panels/IlluminancePanel.js';
 import { RenderPanel } from './ui/panels/RenderPanel.js';
 import { ModelPanel } from './ui/panels/ModelPanel.js';
 import { ModelPlan } from './ui/panels/ModelPlan.js';
+import { ModelCanvas } from './ui/panels/ModelCanvas.js';
 import { TimeAxis } from './ui/panels/TimeAxis.js';
 import { FloorPlan } from './ui/panels/FloorPlan.js';
 import { HudStats } from './ui/panels/HudStats.js';
@@ -373,6 +375,11 @@ export default function App() {
           const transitioning = controllerRef.current?.isRunning() ?? false;
           syncFixtures(eng, prev.project.fixtures, state.project.fixtures, transitioning, state.activeSceneKey);
           syncZones(eng, prev.project.zones, state.project.zones, prev.selectedZoneKey, state.selectedZoneKey);
+          // P22 §3.6：房间尺寸随 model 变化而更新
+          if (state.project.model !== prev.project.model && state.project.model !== null && state.project.model !== undefined) {
+            const dims = modelToRoomDims(state.project.model);
+            if (dims !== null) eng.rebuildRoom(dims.width, dims.depth, dims.height);
+          }
           // 自动保存到 localStorage（防抖：只在 project 对象引用变化时保存）
           if (state.project !== prev.project) {
             try {
@@ -550,6 +557,7 @@ export default function App() {
             <FloorPlan />
             <ModelPanel />
             <ModelPlan />
+            <ModelCanvas />
             <ZonePanel />
             {professional && <FixturePanel />}
           </div>

@@ -190,6 +190,15 @@ export class SceneEngine {
    */
   private zoneObjects = new Map<string, Group>();
 
+  /** 房间 Group 引用（P22 §3.6：rebuildRoom 时替换） */
+  private roomGroup: Group | null = null;
+  /** 天空场景 Group 引用（P22 §3.6：rebuildRoom 时替换） */
+  private skyGroup: Group | null = null;
+  /** 尘埃粒子 Points 引用（P22 §3.6：rebuildRoom 时替换） */
+  private _dustRef: Points | null = null;
+  /** 装饰绿植 Group 引用（P22 §3.6：rebuildRoom 时替换） */
+  private _decorRef: Group | null = null;
+
   /**
    * 每盏灯当前应用的亮度级别（0..1，1 = 全亮）。
    * 与 `Fixture.control.sceneLevels` 的区别：这里是**渲染实况**（动画中逐帧变化），
@@ -414,6 +423,7 @@ export class SceneEngine {
     const roomHeight = config.roomHeight ?? 2.8;
     const { group, windows } = buildRoom(roomWidth, roomDepth, roomHeight, { withWindow: true });
     this.scene.add(group);
+    this.roomGroup = group;
 
     // 室外远景（太阳圆盘 + 远山/城市剪影）放在落地窗外。
     // 窗中心直接取玻璃 mesh 的位置（房间组在原点，局部坐标即世界坐标），
@@ -437,6 +447,7 @@ export class SceneEngine {
     // 静态剪影，不参与阴影、不受光照，始终可见。sky-scene 整组移除时一并回收。
     this.skyline = buildSkyline(new Vector3(0, 0, 0), new Vector3(0, 0, -1));
     sky.group.add(this.skyline);
+    this.skyGroup = sky.group;
 
     // 尘埃粒子（P8b）：悬浮在房间中部高度，营造「空气中漂浮的尘埃」质感。
     // 体积略小于房间，避免粒子贴墙显得假。
@@ -446,6 +457,7 @@ export class SceneEngine {
     });
     this.dustPoints.position.y = roomHeight * 0.5;
     this.scene.add(this.dustPoints);
+    this._dustRef = this.dustPoints;
 
     // 假体积光柱（P8b）：从窗中心射向房间中心的地板落点，正对相机视野。
     // 几何构建一次固定不变；updateSunPosition 每帧只改 opacity 做渐隐。
@@ -478,12 +490,122 @@ export class SceneEngine {
     // 与相机前景，保证不挡光、不挡视线。静态几何，不参与每帧更新。
     this.decorPlants = this.buildDecorPlants(roomWidth, roomDepth);
     this.scene.add(this.decorPlants);
+    this._decorRef = this.decorPlants;
 
     // 环境反射（P8a 根因 C）：RoomEnvironment PMREM 让 PBR 材质「活起来」。
     // 仅 WebGL2 路径生成；WebGPU / 测试 mock 安全跳过（见 initEnvironment）。
     this.initEnvironment();
 
     // 初始更新太阳
+    this.updateSunPosition();
+  }
+
+  /**
+   * 重建房间几何体（P22 §3.6）。
+   *
+   * 当 `project.model` 变化时（应用模板、描墙提交等），
+   * 调用此方法让 3D 房间尺寸与 2D 户型图同步。
+   *
+   * **性能红线**：每帧只更新 opacity（太阳高度角联动），
+   * 几何体重建只在 model 变化时触发一次。
+   *
+   * @param width  房间宽（米）
+   * @param depth  房间深（米）
+   * @param height 房间高（米）
+   */
+  rebuildRoom(width: number, depth: number, height: number): void {
+    if (!(width > 0) || !(depth > 0) || !(height > 0)) return;
+
+    // 移除旧房间
+    if (this.roomGroup !== null) {
+      this.scene.remove(this.roomGroup);
+      this.roomGroup = null;
+    }
+    // 移除旧天空场景
+    if (this.skyGroup !== null) {
+      this.scene.remove(this.skyGroup);
+      this.skyGroup = null;
+      this.skySun = null;
+      this.skySunMat = null;
+      this.skyBackdrop = null;
+      this.skyline = null;
+    }
+    // 移除旧尘埃粒子
+    if (this._dustRef !== null) {
+      this.scene.remove(this._dustRef);
+      this._dustRef = null;
+      this.dustPoints = null;
+    }
+    // 移除旧绿植
+    if (this._decorRef !== null) {
+      this.scene.remove(this._decorRef);
+      this._decorRef = null;
+      this.decorPlants = null;
+    }
+    // 移除旧光柱
+    if (this.lightShaft !== null) {
+      this.scene.remove(this.lightShaft);
+      this.lightShaft = null;
+    }
+    if (this.lightShaftCross !== null) {
+      this.scene.remove(this.lightShaftCross);
+      this.lightShaftCross = null;
+    }
+
+    // 构建新房间
+    const { group, windows } = buildRoom(width, depth, height, { withWindow: true });
+    this.scene.add(group);
+    this.roomGroup = group;
+
+    // 新窗户玻璃
+    const glass = windows[0];
+    if (glass) {
+      this.skyOrigin.copy(glass.position);
+      this.windowGlass = glass;
+    }
+
+    // 新天空场景
+    const sky = buildSkyScene(this.skyOrigin, new Vector3(0, 0, -1));
+    this.skySun = sky.sun;
+    this.skySunMat = sky.sun.material as MeshBasicMaterial;
+    this.skyBackdrop = sky.backdrop;
+    this.scene.add(sky.group);
+    this.skyGroup = sky.group;
+    this.skyline = buildSkyline(new Vector3(0, 0, 0), new Vector3(0, 0, -1));
+    sky.group.add(this.skyline);
+
+    // 新尘埃粒子
+    this.dustPoints = buildDustParticles({
+      count: 350,
+      volumeSize: [width * 0.8, height * 0.75, depth * 0.8],
+    });
+    this.dustPoints.position.y = height * 0.5;
+    this.scene.add(this.dustPoints);
+    this._dustRef = this.dustPoints;
+
+    // 新光柱
+    const shaft = buildLightShaft(this.skyOrigin.clone(), new Vector3(0, 0, 0), {
+      opacity: this.shaftBaseOpacity,
+    });
+    shaft.material = (shaft.material as MeshBasicMaterial).clone();
+    const cross = shaft.clone();
+    cross.material = (shaft.material as MeshBasicMaterial).clone();
+    cross.position.copy(shaft.position);
+    cross.quaternion.copy(shaft.quaternion);
+    const quarter = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2);
+    cross.quaternion.multiply(quarter);
+    (cross.material as MeshBasicMaterial).color.setHex(0xff9a4d);
+    this.lightShaft = shaft;
+    this.lightShaftCross = cross;
+    this.scene.add(shaft);
+    this.scene.add(cross);
+
+    // 新绿植
+    this.decorPlants = this.buildDecorPlants(width, depth);
+    this.scene.add(this.decorPlants);
+    this._decorRef = this.decorPlants;
+
+    // 更新太阳位置
     this.updateSunPosition();
   }
 
@@ -1189,6 +1311,10 @@ export class SceneEngine {
       });
       this.decorPlants = null;
     }
+    this._decorRef = null;
+    this._dustRef = null;
+    this.roomGroup = null;
+    this.skyGroup = null;
     // 清理 PMREM 环境贴图产物（仅 WebGL2 路径生成；未生成时为 null，安全跳过）
     this.scene.environment = null;
     this.envRenderTarget?.dispose();

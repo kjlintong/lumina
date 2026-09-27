@@ -75,12 +75,19 @@ interface ModelingState {
   model: ModelGeometry;
   pendingVertices: readonly [number, number][];
   pendingRoomName: string;
+  gridSnap: boolean;
+  orthoSnap: boolean;
+  isDrawing: boolean;
 
   applyTemplate: (id: string) => void;
   clearModel: () => void;
   addPendingVertex: (vertex: [number, number]) => void;
   cancelPending: () => void;
   commitRoom: (roomName: string) => void;
+  setGridSnap: (v: boolean) => void;
+  setOrthoSnap: (v: boolean) => void;
+  startDrawing: () => void;
+  stopDrawing: () => void;
   undo: () => void;
   redo: () => void;
   canUndo: () => boolean;
@@ -123,6 +130,9 @@ export const useModelingStore = create<ModelingState>()(
     model: emptyModel(),
     pendingVertices: [],
     pendingRoomName: '房间',
+    gridSnap: true,
+    orthoSnap: true,
+    isDrawing: false,
 
     applyTemplate: (id) => {
       const t = getTemplate(id);
@@ -159,7 +169,7 @@ export const useModelingStore = create<ModelingState>()(
     },
 
     cancelPending: () => {
-      set({ pendingVertices: [] });
+      set({ pendingVertices: [], isDrawing: false });
     },
 
     commitRoom: (roomName) => {
@@ -188,9 +198,14 @@ export const useModelingStore = create<ModelingState>()(
         before: structuredClone(prev),
         after: structuredClone(next),
       });
-      set({ model: next, pendingVertices: [] });
+      set({ model: next, pendingVertices: [], isDrawing: false });
       syncToProjectStore();
     },
+
+    setGridSnap: (v) => set({ gridSnap: v }),
+    setOrthoSnap: (v) => set({ orthoSnap: v }),
+    startDrawing: () => set({ isDrawing: true }),
+    stopDrawing: () => set({ isDrawing: false }),
 
     undo: () => {
       const entry = undoStack.undo();
