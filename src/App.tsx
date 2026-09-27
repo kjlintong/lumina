@@ -12,6 +12,11 @@ import { serializeProject, deserializeProject } from './core/serialize.js';
 import { SceneEngine } from './scene/sceneEngine.js';
 import { SceneController } from './scene/sceneController.js';
 import { MANUAL_LEVEL_KEY, useProjectStore } from './store/projectStore.js';
+import {
+  readProfessionalMode,
+  writeProfessionalMode,
+} from './store/professionalMode.js';
+import { Panel } from './ui/panels/Panel.js';
 import { ZonePanel } from './ui/panels/ZonePanel.js';
 import { FixturePanel } from './ui/panels/FixturePanel.js';
 import { CameraPanel } from './ui/panels/CameraPanel.js';
@@ -233,6 +238,16 @@ export default function App() {
 
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+
+  // P19：专业模式开关。工程/专业控件（照度数值 / 灯具坐标 / 渲染调参 /
+  // JSON 导入导出）默认对 C 端用户不可见，勾开关后展开。
+  // 用 readProfessionalMode 作为 lazy initializer，只在首次渲染读一次 localStorage。
+  const [professional, setProfessional] = useState(readProfessionalMode);
+
+  const handleProfessionalToggle = (on: boolean) => {
+    setProfessional(on);
+    writeProfessionalMode(on);
+  };
 
   useEffect(() => {
     let disposed = false;
@@ -532,7 +547,7 @@ export default function App() {
           <div className="sidebar-content">
             <FloorPlan />
             <ZonePanel />
-            <FixturePanel />
+            {professional && <FixturePanel />}
           </div>
         )}
       </aside>
@@ -543,22 +558,39 @@ export default function App() {
         </button>
         {rightOpen && (
           <div className="sidebar-content">
+            {/* P19：「专业模式」开关。默认收起，避免面板标题常驻。 */}
+            <Panel title="专业模式" defaultOpen={false}>
+              <label className="field">
+                <span className="field-label">工程与专业参数</span>
+                <input
+                  type="checkbox"
+                  aria-label="专业模式"
+                  checked={professional}
+                  onChange={(e) => handleProfessionalToggle(e.target.checked)}
+                />
+              </label>
+              <div className="field-note">
+                开启后显示照度数值、灯具坐标与渲染调参
+              </div>
+            </Panel>
             <ScenePanel onApplyScene={(key) => controllerRef.current?.applyScene(key)} />
             <CameraPanel
               onPresetChange={(key) => engineRef.current?.setCameraPreset(key)}
             />
-            <IlluminancePanel />
-            <RenderPanel
-              postProcessing={backendType === 'webgl2'}
-              bloom={bloom}
-              onBloomChange={handleBloomChange}
-              godrays={godrays}
-              onGodraysChange={handleGodraysChange}
-              dustVisible={dustVisible}
-              onDustVisibleChange={handleDustVisibleChange}
-              lightShaftVisible={lightShaftVisible}
-              onLightShaftVisibleChange={handleLightShaftVisibleChange}
-            />
+            {professional && <IlluminancePanel />}
+            {professional && (
+              <RenderPanel
+                postProcessing={backendType === 'webgl2'}
+                bloom={bloom}
+                onBloomChange={handleBloomChange}
+                godrays={godrays}
+                onGodraysChange={handleGodraysChange}
+                dustVisible={dustVisible}
+                onDustVisibleChange={handleDustVisibleChange}
+                lightShaftVisible={lightShaftVisible}
+                onLightShaftVisibleChange={handleLightShaftVisibleChange}
+              />
+            )}
           </div>
         )}
       </aside>

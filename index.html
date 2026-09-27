@@ -112,6 +112,9 @@
     .overlay .warning { color: var(--accent-warm-strong); }
     .info.dev-only { color: var(--text-dim); font-size: var(--font-size-xs); }
 
+    /* P19：面板内的小字说明（复用 --text-muted / --font-size-xs，不新增 token） */
+    .field-note { color: var(--text-muted); font-size: var(--font-size-xs); line-height: 1.4; }
+
     /* HUD 数字统计（overlay 内）—— 默认只显示 FPS 一行，点 ⓘ 展开细节 */
     .hud-stats { margin-top: 6px; padding-top: 6px; border-top: var(--border-subtle); display: flex; flex-direction: column; gap: 4px; }
     .hud-toggle { width: 100%; display: flex; align-items: center; gap: 8px; background: none; border: none; cursor: pointer; padding: 2px 0; color: inherit; font: inherit; }

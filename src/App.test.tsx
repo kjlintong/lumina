@@ -1,4 +1,5 @@
 import { render } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 
@@ -132,5 +133,62 @@ describe('App：degradation 提示的 dev/prod 可见性（P10 §交付物 3）'
     expect(container.querySelector('.info.dev-only')).toBeNull();
     // degradation 文本本身也不该出现在页面上（避免"提示存在但被藏起来"）
     expect(container.textContent ?? '').not.toContain('WebGPU');
+  });
+});
+
+describe('App：专业模式门禁（P19，§4 Day 6 j）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.localStorage.clear();
+    setDev(true);
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    setDev(true);
+  });
+
+  it('默认（未开启）不渲染 照度估算 / 灯具参数 / 渲染与项目 面板', async () => {
+    const { container } = await renderApp();
+    await flushEffects();
+    expect(container.textContent).not.toContain('照度估算');
+    expect(container.textContent).not.toContain('灯具参数');
+    expect(container.textContent).not.toContain('渲染与项目');
+    // 用户可见的产品 UI 仍在
+    expect(container.textContent).toContain('场景');
+    expect(container.textContent).toContain('相机机位');
+  });
+
+  it('勾选专业模式后三个面板出现', async () => {
+    const { container } = await renderApp();
+    await flushEffects();
+
+    // 「专业模式」Panel 默认收起（defaultOpen=false），先展开标题栏才能拿到 checkbox。
+    const header = Array.from(container.querySelectorAll('.panel-header')).find((btn) =>
+      btn.textContent?.includes('专业模式'),
+    );
+    expect(header, '应当能定位「专业模式」面板标题').not.toBeUndefined();
+    await userEvent.click(header!);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const checkbox = container.querySelector(
+      'input[type="checkbox"][aria-label="专业模式"]',
+    );
+    expect(checkbox, '应当能定位专业模式开关').not.toBeNull();
+    await userEvent.click(checkbox!);
+    expect(container.textContent).toContain('照度估算');
+    expect(container.textContent).toContain('渲染与项目');
+    // FixturePanel 在 mock 下「未选中灯具」时依然渲染 <Panel title="灯具参数"> 与空态提示，
+    // 因此标题应可见（若后续引入无灯具时整面板 return null 的分支，此处需相应放宽）。
+    expect(container.textContent).toContain('灯具参数');
+  });
+
+  it('开关状态跨实例持久化（写 localStorage 后再渲染）', async () => {
+    window.localStorage.setItem('lumina.professionalMode', '1');
+    const { container } = await renderApp();
+    await flushEffects();
+    expect(container.textContent).toContain('照度估算');
   });
 });
