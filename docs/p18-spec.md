@@ -47,11 +47,11 @@ export const CAMERA_PRESETS: readonly CameraPreset[] = [
     target: [0, 1.2, -1],
   },
   {
-    // 餐桌位：餐桌边，看向对面（用餐视角）
+    // 餐桌位：餐桌西侧斜上俯视，桌面居中
     key: 'dining',
     name: '餐桌位',
-    position: [1.5, 1.3, 1.0],
-    target: [0, 1.0, -0.5],
+    position: [0.5, 1.4, 0.6],
+    target: [1.4, 0.74, -1.0],
   },
   {
     // 全景位：房间一角高角度，俯瞰全屋（户型展示）
