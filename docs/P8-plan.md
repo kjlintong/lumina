@@ -72,6 +72,15 @@ P8 六阶段全部完成，测试 310 → 435 条。时间轴经用户验收改�
 | P9b 视觉验收 | ✅ 已做（Hermes 浏览器驱动） | `docs/P9b-visual-acceptance.md` |
 | P10 UI 视觉统一（design tokens / HUD 精简 / dev-only 降级提示 / 2D 户型图美化） | ✅ 已提交（`45fc60a`） | `docs/P10-ui-polish-spec.md` |
 | P10 视觉验收 | ✅ 已做（Hermes 浏览器驱动） | `docs/P10-visual-acceptance.md` |
+| P11 灯罩可见性修复（双重偏移 bug + 正确几何） | ✅ 已提交（`736b82c`） | — |
+| P12 相机视高 / 场景 CCT 矩阵 / 材质 / IBL 强度 / 光柱默认 | ✅ 已提交（`2a0ef2f`） | `docs/p12-spec.md` |
+| P13 godrays 按规格定版 + jitter 采样 + exposure/boost 分工 + 修光柱开关锁存 | ✅ 已提交（`38b6df4`） | — |
+| P14 材质最小包（木地板三件套 + 玻璃 transmission + 布艺布纹） | ✅ 已提交（`feb01c4`） | `docs/p14-spec.md` |
+| P15 天空渐变方向修正 + 时间默认流逝 + 渐变方向防回归测试（P15c rotateSpeed 反转 `b630db0`） | ✅ 已提交（`ddde017`） | `docs/p15-spec.md` |
+| P16 Bloom 按太阳高度分三档（日间 / 日落 / 夜间） | ✅ 已提交（`9bf4593`） | `docs/p16-spec.md` |
+| P17 太阳阴影视锥收紧到 ±6m + 清理 PointLight 死代码 | ✅ 已提交（`afe219a`） | `docs/p17-spec.md` |
+| P18 4 相机机位预设 + 引擎内 tween（餐桌位俯视桌面中心 `43ba548`） | ✅ 已提交（`84567fd`） | `docs/p18-spec.md` |
+| P19 专业模式门禁（JSON / lux / XYZ / 渲染调参默认收起，§4 Day 6 j） | 🚧 实现中 | `docs/p19-spec.md` |
 
 ## 遗留问题（不阻塞，已记录）
 
@@ -85,3 +94,7 @@ P8 六阶段全部完成，测试 310 → 435 条。时间轴经用户验收改�
    需用户在真实 GPU 机器上起 dev server 看 HUD 实测。
 5. **装饰绿植与参考图仍有差距**：参考 2 的绿植体量更大、层数更多，当前 P8d 版本偏小巧。
    可后续增加变体或调高 `FOLIAGE_HEIGHT`。
+6. **P11–P19 尚未产出 lookdev 金标准截图**：`docs/lookdev/` 目录尚不存在。按
+   `LUMINA_两周执行规格_hermes.md` §8 的每日门禁要求，每个 P 阶段需附金标准截图。
+   截图必须在真实 GPU 机器上导出 —— 本开发环境是 WSL2 SwiftShader，禁止在此验收画面
+   （与第 4 条同源：SwiftShader 下 rAF 不派发、渲染开销不可作为画面依据）。
