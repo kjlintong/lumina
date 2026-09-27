@@ -36,6 +36,7 @@
 import {
   CircleGeometry,
   Color,
+  CylinderGeometry,
   Mesh,
   MeshStandardMaterial,
   Object3D,
@@ -169,15 +170,32 @@ function declaresIES(photometric: Photometric): boolean {
 // 灯罩可视化
 // ---------------------------------------------------------------------------
 
-/** 按 shape.form 选择灯罩几何：球/盘类用贴合造型，其余一律小球兜底。 */
-function shadeGeometry(form: ShadeForm, diameter: number): SphereGeometry | CircleGeometry {
-  const radius = Math.max(0.005, diameter / 2);
+/** 灯罩可视化放缩因子（P11 视觉修复）。
+ * 真实直径 0.15-0.25m 在 3-4m 相机距离下投影仅 15-25px，几乎不可见。
+ * 这里放大 2.5×（体积等效 ×15.6）让灯罩在默认视角内清晰可辨，
+ * 不影响物理光照数据（`Fixture.shape.diameter` 保持不变，
+ * `photometric` 与 `intensity` 都不动，仅可视化替身放大）。
+ */
+export const SHADE_VISUAL_SCALE = 2.5;
+
+/** 按 shape.form 选择灯罩几何：球/盘类用贴合造型，圆柱/圆筒/锥筒兜底成 CylinderGeometry。 */
+function shadeGeometry(form: ShadeForm, diameter: number, height: number): SphereGeometry | CircleGeometry | CylinderGeometry {
+  const radius = Math.max(0.005, diameter / 2) * SHADE_VISUAL_SCALE;
+  const h = Math.max(0.02, height) * SHADE_VISUAL_SCALE;
   switch (form) {
     case 'sphere':
       return new SphereGeometry(radius, 16, 12);
     case 'disc':
     case 'plane':
       return new CircleGeometry(radius, 24);
+    case 'cylinder':
+    case 'line':
+      return new CylinderGeometry(radius, radius, h, 12);
+    case 'cone':
+      return new CylinderGeometry(0.01, radius, h, 12);
+    case 'custom':
+      // 兜底成略胖的球，比 default 大以增强可见性
+      return new SphereGeometry(radius, 16, 12);
     default:
       return new SphereGeometry(radius, 12, 8);
   }
@@ -379,8 +397,12 @@ export function buildLightFromFixture(f: Fixture): LightBuildResult {
     emissive: new Color(r, g, b),
     emissiveIntensity: SHADE_EMISSIVE_SCALE,
   });
-  const shadeMesh = new Mesh(shadeGeometry(f.shape.form, f.shape.diameter), shadeMat);
-  shadeMesh.position.set(fx, fy, fz);
+  const shadeMesh = new Mesh(shadeGeometry(f.shape.form, f.shape.diameter, f.shape.height), shadeMat);
+  // P11 位置 bug 修复：group 已在 (fx, fy, fz)（见上 group.position.set），
+  // 这里再 set(fx, fy, fz) 会双重偏移——实际渲染位置是 fixture 位置的两倍。
+  // shadeMesh 相对 group 是原点 (0,0,0)，即灯罩就长在 group 的 fixture 位置。
+  // 保留这一行以显式设 local origin，避免后续误加偏移。
+  shadeMesh.position.set(0, 0, 0);
   // 出光面朝向 = rot 姿态
   shadeMesh.rotation.set(f.rot.pitch, f.rot.yaw, 0);
   // 灯罩不投/收阴影：否则它会把自家光源照成黑斑
