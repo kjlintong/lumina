@@ -50,5 +50,15 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
     css: false,
+    // 限制并发：本机 WSL 仅 15GiB，Three.js+React19+jsdom 的依赖树很重，
+    // 默认按 32 核起 32 个 worker 会瞬间吃爆内存触发 OOM killer，导致 WSL 卡死重启。
+    // 固定用 forks 池（进程隔离，单进程崩了不会拖垮整套）+ 少量 worker。
+    pool: 'forks',
+    poolOptions: {
+      forks: {
+        maxForks: 4,
+        minForks: 1,
+      },
+    },
   },
 });
