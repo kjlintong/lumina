@@ -464,6 +464,27 @@ export default function App() {
     setBloom({ strength, radius, threshold });
   };
 
+  // P16：Bloom 由场景引擎每帧按太阳高度自动驱动（updateSunPosition → setBloom）。
+  // 用 rAF 轮询 backend 的当前值，只在值变化时 setState，避免每帧重渲染。
+  // handleBloomChange 保留（用户手动调），但会被下一帧的自动驱动覆盖。
+  useEffect(() => {
+    if (backendType !== 'webgl2' || !ready) return;
+    let rafId: number;
+    const tick = () => {
+      const b = backendRef.current?.getBloom?.();
+      if (b) {
+        setBloom((prev) =>
+          prev && prev.strength === b.strength && prev.radius === b.radius && prev.threshold === b.threshold
+            ? prev
+            : b,
+        );
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [backendType, ready]);
+
   const handleGodraysChange = (partial: Partial<GodraysSettings>) => {
     backendRef.current?.setGodrays?.(partial);
     const current = godrays ?? { ...DEFAULT_GODRAYS };

@@ -53,6 +53,7 @@ import { buildSkyline } from '../render/skyline.js';
 import { buildLightShaft } from '../render/volumetricShaft.js';
 import { buildPlanter, buildPlant } from '../render/plants.js';
 import { AutoExposure } from '../render/autoExposure.js';
+import { bloomForSunIntensity } from '../render/postProcessing.js';
 import { solarColor, solarPosition } from './solar.js';
 
 /** 场景引擎配置 */
@@ -830,6 +831,13 @@ export class SceneEngine {
     const nightFactor = clamp01((0.2 - this.sunLight.intensity) / 0.15); // 0（白天）→ 1（夜晚）
     const targetExposure = 1.0 - nightFactor * 0.5; // 1.0 → 0.5
     this.backend.setToneMappingExposure(targetExposure);
+
+    // ---- P16：Bloom 按太阳高度分档（审查报告 §4 Day 4 h）----
+    // 与曝光分档同源：sunInt 由上方太阳天文位置决定。日间/日落/夜间各一套 Bloom
+    // 参数（bloomForSunIntensity 内部按 0.2 / 0.05 分三档）。
+    // setBloom 是可选方法（WebGPU 后端无后处理），用 ?. 保底。
+    const bloom = bloomForSunIntensity(this.sunLight.intensity);
+    this.backend.setBloom?.(bloom.strength, bloom.radius, bloom.threshold);
   }
 
   /** 设置时间 */

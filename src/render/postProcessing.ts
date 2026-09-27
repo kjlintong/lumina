@@ -51,6 +51,23 @@ export interface BloomSettings {
   threshold: number;
 }
 
+/** Bloom 三档参数（按太阳高度）。对应审查报告 §4 Day 4 h。 */
+export const BLOOM_DAY: BloomSettings = { strength: 0.25, radius: 0.7, threshold: 0.85 };
+export const BLOOM_SUNSET: BloomSettings = { strength: 0.55, radius: 0.7, threshold: 0.85 };
+export const BLOOM_NIGHT: BloomSettings = { strength: 0.45, radius: 0.7, threshold: 0.9 };
+
+/**
+ * 按太阳强度选择 Bloom 档位。
+ *
+ * @param sunIntensity 太阳平行光强度（由 sceneEngine.updateSunPosition 每帧更新）
+ * @returns 匹配的 Bloom 参数
+ */
+export function bloomForSunIntensity(sunIntensity: number): BloomSettings {
+  if (sunIntensity > 0.2) return BLOOM_DAY;
+  if (sunIntensity > 0.05) return BLOOM_SUNSET;
+  return BLOOM_NIGHT;
+}
+
 /**
  * 后处理管线控制器。
  *
