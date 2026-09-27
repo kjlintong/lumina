@@ -978,15 +978,12 @@ export class SceneEngine {
 
   /** 设置体积光柱可见性（P8b 性能开关；与太阳高度角的渐隐相乘） */
   setLightShaftVisible(enabled: boolean): void {
-    if (this.lightShaft) {
-      // 记录用户意图；updateSunPosition 每次按其 × 太阳高度角 决定最终 visible。
-      this.shaftUserEnabled = enabled;
-      this.lightShaft.visible = enabled && this.lightShaft.visible;
-    }
-    // P9 交付物 4：交叉片与主片同步（否则用户关光柱时另一片仍显示）
-    if (this.lightShaftCross) {
-      this.lightShaftCross.visible = enabled && this.lightShaftCross.visible;
-    }
+    // 只记录用户意图。updateSunPosition 每帧按 `shaftUserEnabled && opacity > 0`
+    // 决定最终 visible（见该函数），此处无需再改 .visible —— 而且不该改：
+    // P12 前光柱默认显示、默认关时 .visible 已是 true/false，早期实现用
+    // `enabled && this.lightShaft.visible` 会让「关闭」不可逆（visible 一旦变
+    // false，再传 enabled=true 也算出 false），即 UI 开关点「开」永远无效。
+    this.shaftUserEnabled = enabled;
   }
 
   /** 设置相机位置（朝向房间中心 1.5m 高度，P12 平视；同步轨道控制器目标点保持一致） */

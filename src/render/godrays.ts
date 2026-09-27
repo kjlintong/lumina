@@ -30,7 +30,7 @@ export interface GodraysSettings {
   weight: number;
   /** 光晕半径（0–2） */
   screenRadius: number;
-  /** 采样数（4–64，越高越精细但越慢） */
+  /** 采样数（4–128，越高越精细但越慢） */
   sampleCount: number;
   /** 是否启用 */
   enabled: boolean;
@@ -39,23 +39,37 @@ export interface GodraysSettings {
    * 0.85；乘以 uBoost 后能被 bloom 抓到，光柱才有可见辉光。默认 3.0。
    */
   boost: number;
+  /**
+   * P13：观感曝光乘数（规格 §4 f 的 `exposure 0.40`）。与 boost 分工——
+   * boost 决定能否被 bloom 抓到，exposure 决定最终画面明暗。
+   */
+  exposure: number;
 }
 
 export const DEFAULT_GODRAYS: GodraysSettings = {
-  // P9b：0.2 → 0.5。让 godrays 散射量级从「几乎看不见」提到「肉眼可辨」。
-  density: 0.5,
-  decay: 2.0,
-  // P9b：1.0 → 2.0。配合 density 让总散射量级翻倍。
-  weight: 2.0,
+  // P13（依据 LUMINA 规格 §4 Day 2–3 f）：按规格定版，取代 P9b 的盲调值。
+  // density 0.5 → 0.75：散射基准强度。
+  density: 0.75,
+  // decay 2.0 → 0.96：指数衰减系数。旧值 2.0 让 falloff 在 1.0 半径内就降到
+  // exp(-1.96)≈0.14，光柱在窗内就被吃干净；0.96 让光在房间里持续更久。
+  decay: 0.96,
+  // weight 2.0 → 0.40：深度差的散射权重。
+  weight: 0.40,
   screenRadius: 1.0,
-  // P9 交付物 3 兜底：24 → 16。godraysRT 已降到半分辨率，sampleCount 再降一档
-  // 进一步压低每帧 ray-marching 成本（配合 5-8 FPS → 30+ 的目标）。
+  // P9 交付物 3 曾 24 → 16（半分辨率 godraysRT 下压成本）。P13 按规格回到 80。
+  // 代价：每像素 80 次深度采样（旧 16 次），约 5×。中端 GPU 可承受；
+  // 低端设备可手动调回 16，UI 滑块已暴露此参数。
   // 注意：下方 godraysShader.uniforms.sampleCount.value 必须同步改同一字面量，
   // 两处各写一份会静默漂移（uniform 初始值与本常量不一致）。
-  sampleCount: 16,
+  sampleCount: 80,
   enabled: true,
-  // P9b：新字段。见 GodraysSettings.boost 注释。
+  // P9b：整体亮度放大倍数，让 godrays 输出能被 bloom threshold 0.85 抓到。
   boost: 3.0,
+  // P13 新增：规格 §4 f 的 `exposure 0.40`。与 boost 分工——
+  // boost 是「能否被 bloom 抓到」的增益，exposure 是画面观感的乘数。
+  // 加法式输出（见 shader）：volumetric = totalLight * boost * exposure，
+  // 因此 exposure 0.40 会把 P9b 的 3.0×boost 结果压回 1.2×，配合新 decay 收敛。
+  exposure: 0.40,
 };
 
 /** Godrays volumetric light shader */
@@ -64,13 +78,18 @@ export const godraysShader = {
     tDiffuse: { value: null },
     tDepth: { value: null },
     lightPos: { value: new THREE.Vector4(0, 0, 0, 1) },
-    density: { value: 0.5 },
-    decay: { value: 2.0 },
-    weight: { value: 2.0 },
+    density: { value: 0.75 },
+    decay: { value: 0.96 },
+    weight: { value: 0.40 },
     screenRadius: { value: 1.0 },
-    sampleCount: { value: 16 },
+    sampleCount: { value: 80 },
     // P9b：整体亮度放大倍数。见 DEFAULT_GODRAYS.boost 注释。
     boost: { value: 3.0 },
+    // P13：观感曝光乘数。见 DEFAULT_GODRAYS.exposure 注释。
+    exposure: { value: 0.40 },
+    // P13：帧号，供 shader 内做确定性 jitter（每帧相位不同，消除量化条带）。
+    // 幅度是 shader 内的编译期常量 JITTER_AMP，故不在此声明 uniform。
+    frame: { value: 0 },
   },
 
   vertexShader: `
@@ -82,6 +101,8 @@ export const godraysShader = {
   `,
 
   fragmentShader: `
+    varying vec2 vUv;
+
     uniform sampler2D tDiffuse;
     uniform sampler2D tDepth;
     uniform vec4 lightPos;
@@ -90,9 +111,23 @@ export const godraysShader = {
     uniform float weight;
     uniform float screenRadius;
     uniform float sampleCount;
-    // P9b：整体亮度放大倍数，让 godrays 输出能被 bloom 抓到。
+    // P9b：整体亮度放大倍数。见 DEFAULT_GODRAYS.boost 注释。
     uniform float boost;
-    varying vec2 vUv;
+    // P13：观感曝光乘数（规格 §4 f 的 exposure 0.40）。与 boost 分工。
+    uniform float exposure;
+    // P13：帧号，驱动下方 jitter 的相位。固定采样格点每帧采同一组点，80 个
+    // 采样沿径向累积会出现周期性能量团（banding）；每帧相位微扰后能量团在帧
+    // 间游移，被时间平均抹平。只传 frame 一个 uniform——幅度是编译期常量。
+    uniform float frame;
+
+    // P13：jitter 幅度（编译期常量，屏幕 UV 单位）。半分辨率 godraysRT 下
+    // 0.004 UV ≈ 5px，约 stepSize 的一半，足以打破格点又不至于模糊光柱轮廓。
+    const float JITTER_AMP = 0.004;
+
+    // 确定性伪随机 [0,1)：同一 (frame, i) 必同值，跨像素稳定、跨帧变化。
+    float hash(float n) {
+      return fract(sin(n) * 43758.5453123);
+    }
 
     void main() {
       // Read scene color
@@ -123,10 +158,20 @@ export const godraysShader = {
       float totalLight = 0.0;
       float stepSize = dist / float(sampleCount);
 
-      for (int i = 0; i < 64; i++) {
+      // P13：上界 64 → 128，覆盖 sampleCount 80（旧 64 会静默截断成 64 采样）。
+      for (int i = 0; i < 128; i++) {
         if (i >= int(sampleCount)) break;
 
-        float t = float(i) * stepSize;
+        // P13：jitter（规格要求 80 samples + jitter）。相位随 frame 变化、幅度
+        // 为编译期常量 JITTER_AMP。hash 返回 [0,1) 故 (h-0.5)*2 落在 [-0.5,0.5)，
+        // 乘 JITTER_AMP 后落在 ±JITTER_AMP 内，单位与 t / screenRadius 同为屏幕 UV。
+        // 每帧每采样点偏移都不同 → 打破固定采样格点，消除量化条带（banding）。
+        float jitter = JITTER_AMP * (hash(frame * 17.0 + float(i) * 0.731) - 0.5) * 2.0;
+
+        // t + jitter：沿采样方向微扰，打破固定格点。clamp 到 [0, dist] 防越界。
+        float t = float(i) * stepSize + jitter;
+        if (t < 0.0) t = 0.0;
+        if (t > dist) t = dist;
         vec2 samplePos = lightScreen + dir * t;
 
         // Boundary check
@@ -155,9 +200,11 @@ export const godraysShader = {
         totalLight += scatter * falloff * radiusFalloff;
       }
 
-      // P9b：加 uBoost 放大。godrays 输出通常 0.05–0.2，远低于 bloom threshold
-      // 0.85；乘以 3.0 后能进 bloom，光柱才有可见辉光。clamp 到 0–1 防溢出。
-      float volumetric = clamp(totalLight * boost, 0.0, 1.0);
+      // P13：boost 与 exposure 分工。boost 负责「能否被 bloom 抓到」的增益，
+      // exposure（规格 0.40）负责观感明暗。旧实现只有 boost 3.0 一个旋钮，
+      // 想压暗就得动 boost，一动就掉出 bloom threshold —— 两个目标互相打架。
+      // 加法式输出，clamp 到 0–1 防溢出。
+      float volumetric = clamp(totalLight * boost * exposure, 0.0, 1.0);
       gl_FragColor = vec4(color.rgb + volumetric * 0.5, color.a);
     }
   `,
@@ -217,5 +264,16 @@ export class GodraysPass extends ShaderPass {
     if (u.tDepth) (u.tDepth as { value: THREE.Texture | null }).value = this._depthTexture;
     // P9b：新增。boost 与 GLSL uniform `boost` 同名。
     if (u.boost) (u.boost as { value: number }).value = this._settings.boost;
+    if (u.exposure) (u.exposure as { value: number }).value = this._settings.exposure;
+  }
+
+  /**
+   * P13：设置帧号，驱动 shader 内的确定性 jitter。
+   * postProcessing.render 每帧调用一次（frame + 1）。frame 不进
+   * GodraysSettings（它不是用户可调参数，是逐帧递进值），故单列接口。
+   */
+  setFrame(frame: number): void {
+    const u = this.uniforms;
+    if (u.frame) (u.frame as { value: number }).value = frame;
   }
 }

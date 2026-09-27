@@ -68,6 +68,11 @@ export class PostProcessing {
   private _renderer: WebGLRenderer;
   /** 最近一次 resize 的尺寸，供 enabled 切换时按需创建深度 RT */
   private _size = { w: 0, h: 0 };
+  // P13：godrays jitter 的帧计数器。每渲染一帧 +1，传给 shader 驱动相位
+  // 微扰（见 godrays.ts 的 JITTER_AMP / hash）。对 1024 取模防浮点精度丢失
+  // （frame * 17.0 在 frame > 2^21/17 ≈ 26 万帧时 sin 相位开始退化），
+  // 1024 个相位已足够随机化，视觉上无法分辨。
+  private _frame = 0;
 
   constructor(
     renderer: WebGLRenderer,
@@ -127,6 +132,11 @@ export class PostProcessing {
     this.renderPass.camera = camera;
 
     if (this._godraysSettings.enabled && this.godraysRT) {
+      // P13：推进 jitter 帧号。放在 composer.render 之前，确保 godrays pass
+      // 本轮用的是最新相位；放在 RT 重建/深度绑定之前，避免与它们竞争顺序。
+      this._frame = (this._frame + 1) % 1024;
+      this.godraysPass.setFrame(this._frame);
+
       const prevRT = this._renderer.getRenderTarget();
       this._renderer.setRenderTarget(this.godraysRT);
       this._renderer.render(scene, camera);
