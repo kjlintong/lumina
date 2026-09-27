@@ -318,6 +318,11 @@ export class SceneEngine {
     this.orbitControls.maxDistance = 20;
     this.orbitControls.minDistance = 1;
     this.orbitControls.maxPolarAngle = Math.PI * 0.85;
+    // P15：rotateSpeed 1 → -1，反转旋转方向。默认行为是「鼠标向右拖 → 相机
+    // 绕目标顺时针转 → 画面内容向左走」，用户反馈与直觉相反（期待画面跟随
+    // 鼠标）。负值让相机反向转，画面内容跟着鼠标走。这是交互偏好调整，不是
+    // bug 修复。
+    this.orbitControls.rotateSpeed = -1;
 
     // 光照
     this.sunLight = new DirectionalLight(0xffffff, 1);
