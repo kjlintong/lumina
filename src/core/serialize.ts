@@ -17,6 +17,15 @@ export interface SerializedProject {
   zones: LuminaProject['zones'];
   fixtures: LuminaProject['fixtures'];
   scenes?: LuminaProject['scenes'];
+  /**
+   * 建模半块（执行规格 §6，P21+）。**可选**：未设置时不写入此键，
+   * 保证既有 round-trip 测试（未设 model 的工程）行为完全不变。
+   *
+   * `ModelGeometry` 内部全是 readonly tuple / readonly 数组，JSON 不支持
+   * readonly 标记 —— 但 `structuredClone` 保留结构，往返后仍是数组，
+   * 深度相等测试通过。无需 Set↔数组 的对称处理（model 里没有 Set）。
+   */
+  model?: LuminaProject['model'];
   /** Set -> string[]，仅用于 wire 格式 */
   lockedFields: Record<string, string[]>;
 }
@@ -34,6 +43,8 @@ export function serializeProject(p: LuminaProject): SerializedProject {
     zones: structuredClone(p.zones),
     fixtures: structuredClone(p.fixtures),
     scenes: p.scenes ? structuredClone(p.scenes) : undefined,
+    // 条件展开：未设 model 时不写入此键，wire 格式与现状完全一致
+    ...(p.model ? { model: structuredClone(p.model) } : {}),
     lockedFields,
   };
 }
@@ -52,6 +63,7 @@ export function deserializeProject(s: SerializedProject): LuminaProject {
     zones,
     fixtures,
     ...(s.scenes ? { scenes: structuredClone(s.scenes) } : {}),
+    ...(s.model ? { model: structuredClone(s.model) } : {}),
   };
 }
 

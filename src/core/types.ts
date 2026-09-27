@@ -12,6 +12,8 @@
  * 注意（工程口径）：lux/candela 均为相对估算量，**非实测照度、非验收依据**（§6.3、ADR-15）。
  */
 
+import type { ModelGeometry } from './modeling.js';
+
 // ---------------------------------------------------------------------------
 // 需求侧：活动区
 // ---------------------------------------------------------------------------
@@ -220,6 +222,11 @@ export type UnitSystem = 'metric' | 'imperial';
 
 /**
  * 完整设计方案（可序列化根）。round-trip 测试的目标对象（任务书 §7）。
+ *
+ * `model` 字段是可选的（执行规格 §6「第 2 周：导入建模闭环」）——
+ * 未设置时保持既有 `serialize.ts` 行为完全不变，不牵连既有 round-trip 测试。
+ * 之所以不 bump `schemaVersion`：加可选字段不影响序列化契约，
+ * bump 全局版本号反而会造成无关改动（详见 `docs/p21-spec.md` §2）。
  */
 export interface LuminaProject {
   /** schema 版本，用于迁移 */
@@ -232,6 +239,8 @@ export interface LuminaProject {
   fixtures: Record<string, Fixture>;
   /** M3 场景预设（本阶段仅保留抽象，见 src/scene） */
   scenes?: Record<string, SceneDefinition>;
+  /** 导入建模的几何半块（执行规格 §6，P21+）。可选，未设置时行为与现状一致 */
+  model?: ModelGeometry;
 }
 
 /**
