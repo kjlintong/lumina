@@ -23,6 +23,8 @@ import { CameraPanel } from './ui/panels/CameraPanel.js';
 import { ScenePanel } from './ui/panels/ScenePanel.js';
 import { IlluminancePanel } from './ui/panels/IlluminancePanel.js';
 import { RenderPanel } from './ui/panels/RenderPanel.js';
+import { ModelPanel } from './ui/panels/ModelPanel.js';
+import { ModelPlan } from './ui/panels/ModelPlan.js';
 import { TimeAxis } from './ui/panels/TimeAxis.js';
 import { FloorPlan } from './ui/panels/FloorPlan.js';
 import { HudStats } from './ui/panels/HudStats.js';
@@ -546,6 +548,8 @@ export default function App() {
         {leftOpen && (
           <div className="sidebar-content">
             <FloorPlan />
+            <ModelPanel />
+            <ModelPlan />
             <ZonePanel />
             {professional && <FixturePanel />}
           </div>

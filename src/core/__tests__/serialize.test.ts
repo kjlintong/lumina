@@ -7,6 +7,7 @@ import { fromJSON, serializeProject, toJSON } from '../serialize.js';
 import { makeZone } from '../zoneTypes.js';
 import type { ActivityZone, Fixture, LuminaProject } from '../types.js';
 import type { ModelGeometry, Provenance } from '../modeling.js';
+import { checkTopology } from '../topology.js';
 
 /** 取 Project 中的 Fixture，缺则报错 */
 function reqFx(p: LuminaProject, id: string): Fixture {
@@ -180,6 +181,8 @@ describe('序列化 round-trip（任务书 §7）', () => {
       guaranteesUniformError: true,
       maxErrorCm: 5,
     });
+    // P22: checkTopology 对往返后的 model 仍 passed
+    expect(checkTopology(restored.model!).passed).toBe(true);
   });
 
   it('未设置 model 字段时，wire 格式不写入 model 键（与现状兼容）', () => {

@@ -126,4 +126,10 @@ export class UndoStack<T> {
   snapshot(): { undo: UndoEntry<T>[]; redo: UndoEntry<T>[] } {
     return { undo: [...this.undoEntries], redo: [...this.redoEntries] };
   }
+
+  /** 清空 undo 和 redo 栈（测试隔离用；P22 modelingStore 的 beforeEach） */
+  clear(): void {
+    this.undoEntries = [];
+    this.redoEntries = [];
+  }
 }
