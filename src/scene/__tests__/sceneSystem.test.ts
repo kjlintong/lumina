@@ -182,7 +182,8 @@ describe('SceneSystem.apply()', () => {
 
     expect(staticSnapshot(fixtures)).toBe(before);
     expect(byId(fixtures, 'fx-1').pos).toEqual([9, 1.5, -3]);
-    expect(byId(fixtures, 'fx-1').shape.diameter).toBe(0.18);
+    // P29：disc 默认直径从 0.18 提升到 0.22
+    expect(byId(fixtures, 'fx-1').shape.diameter).toBe(0.22);
   });
 
   it('亮度只写入 control.sceneLevels[sceneKey]，不覆盖其它场景记录', () => {
