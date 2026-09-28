@@ -94,6 +94,7 @@ P8 六阶段全部完成，测试 310 → 435 条。时间轴经用户验收改�
 | P32a 拖放落点 NDC Y 轴误用 clientX + 清 debug log | ✅ 已提交（`1c70db1`） | — |
 | P32a-fix 恢复无 face 命中的跳过（拖放新灯才落到墙上） | ✅ 已提交（`4866ab8` + `ff45a12`） | — |
 | P32b Node 26 下 jsdom `window.localStorage` 变 undefined 的测试回归 | ✅ 已提交（`a353483`，vitest.setup.ts 补内存版 Storage polyfill） | — |
+| P32c 拖放新灯 store→engine 同步断链（视觉看不到新灯） | ✅ 已提交（`a5e49d4`，projectStore 11 处 `get().x = ...` → `set()`） | — |
 
 ### Phase 0 止血（源自 `Lumina项目审查与后续工作方案.md` §二）
 
