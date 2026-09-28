@@ -4,6 +4,9 @@
  * Bloom 光晕：WebGL2 专属（EffectComposer），调用 backend.setBloom。
  * 导出/导入：localStorage 自动保存之外，提供 JSON 文件下载/上传（备份/分享）。
  * 项目名：编辑 LuminaProject.name。
+ *
+ * P26a：hidePostProcessing=true 时（生产环境）隐藏 Bloom / Godrays 调参；
+ * 氛围层（尘埃 / 光柱）与项目管理对所有人可见。
  */
 
 import { useRef, useState } from 'react';
@@ -13,8 +16,8 @@ import type { GodraysSettings } from '../../render/godrays.js';
 import { Panel } from './Panel.js';
 
 interface RenderPanelProps {
-  /** 是否支持后处理（WebGL2 true，WebGPU false） */
-  postProcessing: boolean;
+  /** 生产模式（hidePostProcessing=true）时隐藏 Bloom / Godrays 区块；默认 false */
+  hidePostProcessing?: boolean;
   /** 当前 Bloom 参数 */
   bloom: { strength: number; radius: number; threshold: number } | null;
   /** 设置 Bloom 参数 */
@@ -34,7 +37,7 @@ interface RenderPanelProps {
 }
 
 export function RenderPanel({
-  postProcessing,
+  hidePostProcessing = false,
   bloom,
   onBloomChange,
   godrays,
@@ -92,8 +95,8 @@ export function RenderPanel({
 
   return (
     <Panel title="渲染与项目">
-      {/* Bloom 光晕（仅 WebGL2） */}
-      {postProcessing && bloom && (
+      {/* Bloom 光晕（仅 WebGL2；hidePostProcessing=true 时隐藏） */}
+      {bloom && !hidePostProcessing && (
         <div className="field-group">
           <div className="field-group-title">光晕 (Bloom)</div>
           <label className="field">
@@ -156,8 +159,8 @@ export function RenderPanel({
         </div>
       )}
 
-      {/* 体积光 Godrays（仅 WebGL2） */}
-      {postProcessing && godrays && (
+      {/* 体积光 Godrays（仅 WebGL2；hidePostProcessing=true 时隐藏） */}
+      {godrays && !hidePostProcessing && (
         <div className="field-group">
           <div className="field-group-title">体积光 (Godrays)</div>
           <label className="field">
@@ -247,8 +250,8 @@ export function RenderPanel({
       )}
 
       {/* 氛围层（P8b）：尘埃粒子 + 体积光柱。性能开关——低端设备可关闭。
-          不受 postProcessing 限制：两者都是场景图对象（Points / Mesh），
-          不依赖 EffectComposer，WebGL2 与 WebGPU 后端均可用。 */}
+          不受 hidePostProcessing 限制：两者都是场景图对象（Points / Mesh），
+          不依赖 EffectComposer。 */}
       <div className="field-group">
         <div className="field-group-title">氛围层</div>
         <label className="field">

@@ -70,7 +70,7 @@ describe('HudStats 组件（P10 默认折叠 / 展开交互）', () => {
     expect([...container.querySelectorAll('.hud-value')].map((n) => n.textContent)).toEqual(['58']);
   });
 
-  it('WebGPU（triangles=null）折叠态只显示 FPS；展开后三角面为占位 —', async () => {
+  it('mock 后端（triangles=null）折叠态只显示 FPS；展开后三角面为占位 —', async () => {
     const user = userEvent.setup();
     const { container } = render(
       <HudStats stats={{ triangles: null, objects: 86, fps: 59.7 }} />,

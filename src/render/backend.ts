@@ -1,31 +1,30 @@
 /**
- * RenderBackend 抽象层（P1 核心）
+ * RenderBackend 抽象层（P1 核心；P26a 后单后端）
  *
- * Three.js r186 把 WebGPURenderer 拆到 'three/webgpu' 独立 entry，
- * 主 'three' 入口不导出。业务层必须通过本抽象访问渲染器，
- * 不得直接 import WebGPURenderer 或 WebGLRenderer。
+ * P26a 起锁定 WebGL2 单后端，业务层必须通过本抽象访问渲染器，
+ * 不得直接 import WebGLRenderer。
  *
- * 架构依据：docs/00-p0-version-verification.md §2
+ * 架构依据：docs/00-p0-version-verification.md §2；冻结决策见
+ * docs/p26a-phase0-engineering-spec.md §2.1。
  */
 
 import type { Scene, Camera } from 'three';
-import type { WebGPURenderer } from 'three/webgpu';
 import type { WebGLRenderer } from 'three';
 import { averageLuminanceFromRGBA } from './luminance.js';
 import { PostProcessing } from './postProcessing.js';
 import type { BloomSettings } from './postProcessing.js';
 import type { GodraysSettings } from './godrays.js';
 
-/** 后端类型标识 */
-export type BackendType = 'webgpu' | 'webgl2';
+/** 后端类型标识（P26a 后为字面量，保留联合类型以便接口签名兼容） */
+export type BackendType = 'webgl2';
 
 /** 渲染后端能力声明 */
 export interface BackendCapabilities {
-  /** 是否支持 IES 配光（WebGPU: true，WebGL2: false → 近似路径） */
+  /** 是否支持 IES 配光（当前恒 false：IES 走 iesParser + spot 纹理近似路径） */
   supportsIES: boolean;
-  /** 是否支持 GodraysNode 体积光（仅 WebGPU TSL 路径） */
+  /** 是否支持 Godrays 体积光（依赖 EffectComposer 后处理链） */
   supportsGodrays: boolean;
-  /** 是否支持后处理 EffectComposer（仅 WebGL2） */
+  /** 是否支持后处理 EffectComposer（依赖 enablePostProcessing） */
   supportsEffectComposer: boolean;
   /** 色调映射算法 */
   toneMapping: 'ACESFilmic';
@@ -35,8 +34,6 @@ export interface BackendCapabilities {
 
 /** 后端选项 */
 export interface BackendOptions {
-  /** 强制使用指定后端（测试用），默认自动检测 */
-  forceBackend?: BackendType;
   /** Canvas 元素 */
   canvas: HTMLCanvasElement;
   /** 设备像素比上限（默认 2，移动端可降） */
@@ -44,7 +41,7 @@ export interface BackendOptions {
   /** 初始分辨率 */
   width?: number;
   height?: number;
-  /** 是否启用后处理管线（WebGL2 专属，默认 true） */
+  /** 是否启用后处理管线（EffectComposer + UnrealBloomPass + OutputPass），默认 true */
   enablePostProcessing?: boolean;
 }
 
@@ -52,8 +49,6 @@ export interface BackendOptions {
 export interface BackendResult {
   backend: RenderBackend;
   capabilities: BackendCapabilities;
-  /** 降级原因（用户可见）。无降级时为 undefined */
-  degradationReason?: string;
 }
 
 /**
@@ -66,7 +61,7 @@ export interface RenderBackend {
   readonly capabilities: BackendCapabilities;
 
   /** 获取底层渲染器实例（用于需要访问 Three.js 特定 API 的场景） */
-  getRenderer(): WebGLRenderer | WebGPURenderer;
+  getRenderer(): WebGLRenderer;
 
   /** 渲染一帧 */
   render(scene: Scene, camera: Camera): void;
@@ -89,13 +84,8 @@ export interface RenderBackend {
   /**
    * 采样上一帧渲染的平均亮度（线性空间 0-1），供眼适应自动曝光使用。
    *
-   * 仅 WebGL2 后端实现：渲染到 16×16 临时 render target 后
+   * 仅 WebGL2 路径实现：渲染到 16×16 临时 render target 后
    * `readRenderTargetPixels` 同步回读，`averageLuminanceFromRGBA` 求平均。
-   *
-   * WebGPU 后端**不实现**（返回 undefined）——WebGPU 的 `renderer.render` 是
-   * 异步的（返回 Promise），且回读需要 `requestAdapter`+`requestDevice` 的
-   * buffer copy + `mapAsync`，与 engine 当前的同步 render 调用模型冲突。
-   * 此阶段 WebGPU 走固定曝光（恒 1.0），后续单独接入（见 P5 规格文档）。
    *
    * 引擎构造时检测此方法存在才 `setSampler`；不存在则 autoExposure 自然
    * 不采样，曝光保持初始值 1.0。
@@ -108,33 +98,20 @@ export interface RenderBackend {
   /** 设置色调映射（当前仅 ACESFilmic） */
   setToneMapping(type: 'ACESFilmic'): void;
 
-  /**
-   * 设置 Bloom 后处理参数（仅 WebGL2 支持）。
-   * WebGPU 后端忽略此调用（WebGPU 路径的后期用 TSL 自研 pass）。
-   */
+  /** 设置 Bloom 后处理参数（依赖 EffectComposer） */
   setBloom?(strength: number, radius: number, threshold: number): void;
 
-  /**
-   * 获取当前 Bloom 参数（仅 WebGL2）。
-   * WebGPU 后端返回 undefined。
-   */
+  /** 获取当前 Bloom 参数 */
   getBloom?(): BloomSettings | undefined;
 
-  /**
-   * 设置 Godrays 体积光参数（仅 WebGL2 支持）。
-   * WebGPU 后端忽略此调用。
-   */
+  /** 设置 Godrays 体积光参数（依赖 EffectComposer） */
   setGodrays?(partial: Partial<GodraysSettings>): void;
 
-  /**
-   * 获取当前 Godrays 参数（仅 WebGL2）。
-   * WebGPU 后端返回 undefined。
-   */
+  /** 获取当前 Godrays 参数 */
   getGodrays?(): GodraysSettings | undefined;
 
   /**
    * 设置 Godrays 光源屏幕位置（UV 0–1）。
-   * 仅 WebGL2 支持。WebGPU 后端忽略。
    */
   setGodraysLightPosition?(x: number, y: number): void;
 
@@ -146,36 +123,7 @@ export interface RenderBackend {
 }
 
 /**
- * 运行时 WebGPU 支持检测。
- */
-export async function detectWebGPU(): Promise<{ available: boolean; reason?: string }> {
-  // navigator.gpu 可能不存在（Firefox、旧版 Safari、Node 环境）
-  const nav = navigator as Navigator & {
-    gpu?: { requestAdapter: () => Promise<unknown> };
-  };
-  if (typeof nav === 'undefined' || !nav.gpu) {
-    return { available: false, reason: 'WebGPU 不可用（浏览器不支持 navigator.gpu）' };
-  }
-  try {
-    const adapter = await nav.gpu.requestAdapter();
-    if (!adapter) {
-      return { available: false, reason: '未找到 WebGPU 图形适配器' };
-    }
-    return { available: true };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { available: false, reason: `WebGPU 适配器请求失败：${msg}` };
-  }
-}
-
-/**
- * 创建渲染后端。
- *
- * 自动检测逻辑：
- * 1. 如果 forceBackend 指定，直接使用
- * 2. 否则检测 WebGPU 支持
- * 3. WebGPU 可用 → WebGPU 后端
- * 4. WebGPU 不可用 → WebGL2 后端，附带降级原因
+ * 创建渲染后端。P26a 起锁定 WebGL2 单后端。
  */
 export async function createBackend(options: BackendOptions): Promise<BackendResult> {
   const canvas = options.canvas;
@@ -183,79 +131,6 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
   const height = options.height ?? (canvas.clientHeight || 600);
   const maxPixelRatio = options.maxPixelRatio ?? 2;
 
-  let targetBackend: BackendType;
-  let degradationReason: string | undefined;
-
-  if (options.forceBackend) {
-    targetBackend = options.forceBackend;
-  } else {
-    const gpu = await detectWebGPU();
-    if (gpu.available) {
-      targetBackend = 'webgpu';
-    } else {
-      targetBackend = 'webgl2';
-      degradationReason = gpu.reason;
-    }
-  }
-
-  if (targetBackend === 'webgpu') {
-    try {
-      const { WebGPURenderer } = await import('three/webgpu');
-      const renderer = new WebGPURenderer({
-        canvas,
-        antialias: true,
-        alpha: false,
-      });
-      await renderer.init();
-
-      const capabilities: BackendCapabilities = {
-        supportsIES: true,
-        supportsGodrays: true,
-        supportsEffectComposer: false,
-        toneMapping: 'ACESFilmic',
-        supportsShadows: true,
-      };
-
-      const backend: RenderBackend = {
-        type: 'webgpu',
-        canvas,
-        capabilities,
-        getRenderer: () => renderer,
-        render: (scene: Scene, camera: Camera) => {
-          renderer.render(scene, camera);
-        },
-        resize: (w: number, h: number) => {
-          renderer.setSize(w, h, false);
-        },
-        setExposure: (v: number) => {
-          renderer.toneMappingExposure = v;
-        },
-        getExposure: () => renderer.toneMappingExposure,
-        setToneMappingExposure: (v: number) => {
-          renderer.toneMappingExposure = v;
-        },
-        getToneMappingExposure: () => renderer.toneMappingExposure,
-        setShadows: (enabled: boolean) => {
-          renderer.shadowMap.enabled = enabled;
-        },
-        setToneMapping: (_type: 'ACESFilmic') => {
-          // ACESFilmic 在 WebGPU 路径中由 pipeline 内部管理
-        },
-        dispose: () => {
-          void renderer.dispose();
-        },
-      };
-
-      return { backend, capabilities };
-    } catch (err) {
-      // WebGPU 创建失败，降级到 WebGL2
-      const msg = err instanceof Error ? err.message : String(err);
-      degradationReason = `WebGPU 初始化失败：${msg}，降级到 WebGL2`;
-      targetBackend = 'webgl2';
-    }
-  }
-
-  // WebGL2 兜底路径
   const {
     WebGLRenderer,
     ACESFilmicToneMapping,
@@ -277,7 +152,7 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
   webglRenderer.shadowMap.enabled = true;
   webglRenderer.shadowMap.type = PCFSoftShadowMap;
 
-  // 后处理管线（WebGL2 专属，EffectComposer + UnrealBloomPass + OutputPass）
+  // 后处理管线（EffectComposer + UnrealBloomPass + OutputPass）
   const enablePost = options.enablePostProcessing ?? true;
   const postProcessing = enablePost
     ? new PostProcessing(webglRenderer, {
@@ -396,6 +271,5 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
   return {
     backend,
     capabilities,
-    ...(degradationReason !== undefined ? { degradationReason } : {}),
   };
 }

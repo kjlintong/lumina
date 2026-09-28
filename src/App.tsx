@@ -217,7 +217,6 @@ export default function App() {
 
   const [ready, setReady] = useState(false);
   const [backendType, setBackendType] = useState<BackendType>('webgl2');
-  const [degradation, setDegradation] = useState<string | null>(null);
 
   // 时间 / 速度 / 阴影控制（React 组件状态，调用 engine 对应方法）
   // P8a：时间默认冻结（speed=0），初始停在 17:45 日落前的产品主场景时刻。
@@ -231,15 +230,19 @@ export default function App() {
   const [dustVisible, setDustVisible] = useState(true);
   const [lightShaftVisible, setLightShaftVisible] = useState(false);
 
-  // Bloom 光晕参数（WebGL2 后处理，WebGPU 无此功能）
+  // Bloom 光晕参数（WebGL2 后处理）
   const [bloom, setBloom] = useState<BloomSettings | null>(null);
   // Godrays 体积光参数（WebGL2 后处理）
   const [godrays, setGodrays] = useState<GodraysSettings | null>(null);
   const backendRef = useRef<RenderBackend | null>(null);
 
   // 渲染统计（P8c）：500ms 轮询 getRenderStats，不每帧 setState。
-  // triangles 为 0 表示后端不支持（WebGPU），转成 null 让 HUD 显示 "—"。
+  // triangles 为 0 表示 mock 后端不支持，转成 null 让 HUD 显示 "—"。
   const [renderStats, setRenderStats] = useState<HudStatsData | null>(null);
+
+  // P26a：Bloom / Godrays 滑块只在 dev 模式（/?debug）显示；
+  // 生产环境 RenderPanel 里 Bloom/Godrays 区块被隐藏。
+  const isDev = import.meta.env.DEV;
 
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -335,10 +338,10 @@ export default function App() {
           roomWidth: 6,
           roomDepth: 4.5,
           roomHeight: 2.8,
-          // P15：初始 17:45（日落前），时间以 0.1 小时/秒流逝——用户 24 秒能看到
-          // 太阳从西斜射到日出，画面色温随之渐变。速度滑杆仍可微调（0 = 冻结）。
+          // P15 + P26a：初始 17:45（日落前），默认 timeSpeed=0 冻结；
+          // 播放由 TimeAxis 速度滑杆显式操作。engine 默认 timeSpeed=0
+          // （见 sceneEngine.ts:326 附近），此处不再覆盖。
           initialHour: 17.75,
-          timeSpeed: 0.1,
         });
         engineRef.current = engine;
         backendRef.current = result.backend;
@@ -354,7 +357,7 @@ export default function App() {
         const controller = new SceneController(engine);
         controllerRef.current = controller;
 
-        // 初始化 Bloom + Godrays 状态（WebGL2 后处理，WebGPU 无此功能）
+        // 初始化 Bloom + Godrays 状态（WebGL2 后处理）
         setBloom(result.backend.getBloom?.() ?? null);
         setGodrays(result.backend.getGodrays?.() ?? null);
 
@@ -420,7 +423,6 @@ export default function App() {
         engine.start();
 
         setBackendType(result.backend.type);
-        setDegradation(result.degradationReason ?? null);
         setReady(true);
 
         window.addEventListener('resize', onResize);
@@ -431,7 +433,7 @@ export default function App() {
           if (!eng) return;
           setTimeInfo(formatHour(eng.getHour()));
           setSunset(eng.isSunsetActive());
-          // 渲染统计：triangles === 0 代表后端不支持（WebGPU），转 null 显示 "—"
+          // 渲染统计：triangles === 0 代表 mock 后端不支持，转 null 显示 "—"
           const s = eng.getRenderStats();
           setRenderStats({
             triangles: s.triangles > 0 ? s.triangles : null,
@@ -440,7 +442,9 @@ export default function App() {
           });
         }, 500);
       } catch (err) {
-        setDegradation(`初始化失败: ${err instanceof Error ? err.message : String(err)}`);
+        if (import.meta.env.DEV) {
+          console.error('[Lumina] init failed:', err);
+        }
       }
     }
 
@@ -540,17 +544,15 @@ export default function App() {
       {notice && <div className="toast">{notice}</div>}
 
       <div className="overlay">
-        <div className="title">Lumina — 灯光设计系统</div>
-        <div className="info">渲染后端: {backendType.toUpperCase()}</div>
-        <div className="info">时间: {timeInfo}</div>
-        {/* P9b：WebGPU 降级到 WebGL2 是常态（多数浏览器不支持），从红色警告
-            改成灰色 info 样式，不喧宾夺主。
-            P10：只在 dev 模式显示 —— 生产环境用户根本不需要知道这个后端细节。 */}
-        {import.meta.env.DEV && degradation && (
-          <div className="info dev-only">{degradation}</div>
-        )}
-        {sunset && <div className="warning">日落时段 — 暖光模拟中</div>}
-        <HudStats stats={renderStats} />
+        <div className="hud-block">
+          <div className="title">Lumina — 灯光设计系统</div>
+          <div className="info">渲染后端: {backendType.toUpperCase()}</div>
+          <div className="info">时间: {timeInfo}</div>
+          {sunset && <div className="warning">日落时段 — 暖光模拟中</div>}
+        </div>
+        <div className="hud-block">
+          <HudStats stats={renderStats} />
+        </div>
       </div>
 
       <aside className={`sidebar sidebar-left${leftOpen ? '' : ' collapsed'}`}>
@@ -598,7 +600,7 @@ export default function App() {
             {professional && <IlluminancePanel />}
             {professional && (
               <RenderPanel
-                postProcessing={backendType === 'webgl2'}
+                hidePostProcessing={!isDev}
                 bloom={bloom}
                 onBloomChange={handleBloomChange}
                 godrays={godrays}
@@ -624,7 +626,7 @@ export default function App() {
 
       <BuildBadge backend={backendType} />
 
-      {!ready && !degradation && <div className="loading">加载中...</div>}
+      {!ready && <div className="loading">加载中...</div>}
     </div>
   );
 }

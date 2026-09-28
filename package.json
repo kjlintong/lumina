@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "Lumina — 家庭/室内灯光设计系统（Three.js r186，WebGPU 主 / WebGL2 兜底）",
+  "description": "Lumina — 家庭/室内灯光设计系统（Three.js r186，WebGL2 单后端）",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && vite build",

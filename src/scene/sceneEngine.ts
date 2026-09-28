@@ -408,8 +408,6 @@ export class SceneEngine {
         speed: 0.03,
       });
       // 只有后端实现了像素采样（WebGL2）才接入采样器。
-      // WebGPU 后端不实现 getAverageLuminance（异步 render + buffer 回读
-      // 与同步调用模型冲突），此阶段曝光恒 1.0，后续单独接入。
       // 无采样器时 AutoExposure.update() 自然走固定曝光路径，不会空转。
       if (typeof this.backend.getAverageLuminance === 'function') {
         this.autoExposure.setSampler({
@@ -496,7 +494,7 @@ export class SceneEngine {
     this._decorRef = this.decorPlants;
 
     // 环境反射（P8a 根因 C）：RoomEnvironment PMREM 让 PBR 材质「活起来」。
-    // 仅 WebGL2 路径生成；WebGPU / 测试 mock 安全跳过（见 initEnvironment）。
+    // 仅 WebGL2 路径生成；测试 mock 安全跳过（见 initEnvironment）。
     this.initEnvironment();
 
     // 初始更新太阳
@@ -754,17 +752,13 @@ export class SceneEngine {
    * 生成 RoomEnvironment PMREM 环境贴图并赋给 scene.environment。
    *
    * PMREMGenerator 依赖 WebGL 内部 API（CubeUV render target / shader），
-   * 仅 WebGL2 后端可用；WebGPU 后端跳过（保留 ambient/hemi 兜底）。
+   * WebGL2 后端可用；测试 mock 跳过（保留 ambient/hemi 兜底）。
    * 红线：业务层不直接 new WebGLRenderer，经 backend.getRenderer() 转型。
    * 测试 mock 的 getRenderer 返回 undefined，同样安全跳过。
-   *
-   * 已知缺口（P12 标注）：WebGPU 路径无 IBL——r186 的 PMREMGenerator 无法跨
-   * 后端复用。要补需走 `three/webgpu` 的 EnvironmentNode 路线（架构级改动），
-   * 留给下阶段，此函数即接入点。
    */
   private initEnvironment(): void {
     if (this.backend.type !== 'webgl2') return;
-    const renderer = this.backend.getRenderer() as WebGLRenderer;
+    const renderer = this.backend.getRenderer();
     if (!renderer || typeof renderer.getRenderTarget !== 'function') return;
     try {
       const pmrem = new PMREMGenerator(renderer);
@@ -1118,7 +1112,7 @@ export class SceneEngine {
     // ---- P16：Bloom 按太阳高度分档（审查报告 §4 Day 4 h）----
     // 与曝光分档同源：sunInt 由上方太阳天文位置决定。日间/日落/夜间各一套 Bloom
     // 参数（bloomForSunIntensity 内部按 0.2 / 0.05 分三档）。
-    // setBloom 是可选方法（WebGPU 后端无后处理），用 ?. 保底。
+    // setBloom 是可选方法（部分 mock 后端无后处理），用 ?. 保底。
     const bloom = bloomForSunIntensity(this.sunLight.intensity);
     this.backend.setBloom?.(bloom.strength, bloom.radius, bloom.threshold);
   }
@@ -1241,8 +1235,8 @@ export class SceneEngine {
 
   /**
    * 渲染统计（P8c HUD）。数字全部真实：
-   * - triangles：WebGL2 取 `renderer.info.render.triangles`；WebGPU 无此 API，
-   *   返回 0（UI 显示 `—`，不虚报）。
+   * - triangles：renderer.info.render.triangles（部分 mock 无此 API，
+   *   返回 0，UI 显示 `—`，不虚报）。
    * - objects：遍历 scene，只数 Mesh / Points / Line（见 countRenderableObjects）。
    * - fps：animate 循环内维护的滑动平均；未渲染过时为 0。
    */

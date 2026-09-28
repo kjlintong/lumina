@@ -105,12 +105,14 @@
 
     .loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: var(--font-size-title); }
 
-    /* 顶部信息覆盖层（玻璃质感） */
-    .overlay { position: absolute; top: 10px; left: 10px; background: var(--bg-panel); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: var(--border-subtle); border-radius: var(--radius-lg); padding: 12px 16px; font-size: var(--font-size-md); line-height: 1.6; pointer-events: none; z-index: 5; }
+    /* 顶部信息覆盖层（玻璃质感）— P26a 拆两块 HUD：overlay 只负责定位，
+       每块 hud-block 各自玻璃面板 + padding；左右各预留 340px 通道避开
+       两侧展开的 sidebar（320px + 22px toggle）。 */
+    .overlay { position: absolute; top: 10px; left: 10px; right: 340px; display: flex; gap: 12px; align-items: flex-start; z-index: 5; pointer-events: none; }
+    .overlay .hud-block { background: var(--bg-panel); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: var(--border-subtle); border-radius: var(--radius-lg); padding: 10px 14px; font-size: var(--font-size-md); line-height: 1.5; }
     .overlay .title { font-weight: 700; font-size: var(--font-size-title); margin-bottom: 4px; color: var(--accent-warm); letter-spacing: 0.02em; }
     .overlay .info { color: var(--text-secondary); }
     .overlay .warning { color: var(--accent-warm-strong); }
-    .info.dev-only { color: var(--text-dim); font-size: var(--font-size-xs); }
 
     /* P19：面板内的小字说明（复用 --text-muted / --font-size-xs，不新增 token） */
     .field-note { color: var(--text-muted); font-size: var(--font-size-xs); line-height: 1.4; }

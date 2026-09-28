@@ -7,7 +7,7 @@
  */
 
 export interface BuildBadgeProps {
-  /** 渲染后端标识（webgl2 / webgpu） */
+  /** 渲染后端标识 */
   backend: string;
 }
 

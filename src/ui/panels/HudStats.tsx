@@ -12,7 +12,7 @@
 import { useState } from 'react';
 
 export interface HudStats {
-  /** 三角面数；WebGPU 路径无此数据，传 null 显示 `—` */
+  /** 三角面数；mock 后端无此数据，传 null 显示 `—` */
   triangles: number | null;
   /** 可渲染对象数（Mesh/Points/Line） */
   objects: number;

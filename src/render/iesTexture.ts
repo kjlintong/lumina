@@ -10,7 +10,8 @@
  *    UV 边缘 = 光锥边缘（90° 垂直角）
  *    UV 角度 = 水平角（0-360°）
  *
- * 2. createIESTexture — 180×1 DataTexture，供 WebGPU IESSpotLight.iesMap（P8）
+ * 2. createIESTexture — 180×1 DataTexture（当前 WebGL2 路径暂不使用，
+ *    为未来 WebGL2 自定义 IES 纹理或 WebGPU 复活保留；本轮不删函数体）
  *    u 轴 = 垂直角（0-180°），v 轴 = 水平角（1 texel = 360°）
  *
  * 架构依据：工程方案 §5.2、ADR-18
@@ -134,7 +135,7 @@ export function lookupCandela(data: IESData, horAngle: number, verAngle: number)
 }
 
 // ---------------------------------------------------------------------------
-// WebGPU: 1D IES 纹理（IESSpotLight.iesMap，P8 使用）
+// IES 1D 纹理（历史包袱，暂留）
 // ---------------------------------------------------------------------------
 
 /** 纹理宽度（texel 数），对应 180° 垂直角范围 */
@@ -144,7 +145,7 @@ export const IES_TEXEL_WIDTH = 180;
 export const IES_TEXEL_HEIGHT = 1;
 
 /**
- * 生成 WebGPU IESSpotLight 用的 1D IES 纹理。
+ * 生成 1D IES 纹理（180×1，RedFormat，FloatType）。
  *
  * @param data IES 解析数据
  * @returns DataTexture（180×1，RedFormat，FloatType）

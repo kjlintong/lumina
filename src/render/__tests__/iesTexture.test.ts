@@ -149,7 +149,7 @@ describe('createSpotlightPatternTexture — 圆形投影纹理', () => {
   });
 });
 
-describe('createIESTexture — WebGPU 1D 纹理', () => {
+describe('createIESTexture — 1D IES 纹理', () => {
   it('生成 180×1 纹理', () => {
     const data = parseIES(SYMMETRIC_IES)!;
     const tex = createIESTexture(data);

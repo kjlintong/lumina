@@ -4,7 +4,6 @@
  * Three.js r186 无内置自动曝光。本模块实现采样回调接口，
  * 由各后端插自己的回读机制：
  * - WebGL2: readRenderTargetPixels
- * - WebGPU: compute pass / 回读 buffer
  *
  * 算法（docs/00-p0-version-verification.md §7）：
  * 1. 16×16 降采样求平均亮度

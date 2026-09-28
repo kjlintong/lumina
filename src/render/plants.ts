@@ -109,7 +109,7 @@ export function buildPlanter(
  * 盆栽绿植（默认形态）。
  *
  * 返回的 group 已设置 position，直接 `scene.add()` 即可。
- * canvas 不参与，jsdom / WebGPU / WebGL2 均可用。
+ * canvas 不参与，jsdom / WebGL2 均可用。
  */
 export function buildPlant(opts: PlantOptions = {}): Group {
   const group = new Group();

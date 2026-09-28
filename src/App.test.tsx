@@ -4,28 +4,35 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 
 /**
- * P10：WebGPU → WebGL2 降级提示（`degradation`）只在 dev 模式显示。
+ * App 组件集成测试（P19 专业模式门禁 + P26a Bloom / Godrays 生产可见性）。
  *
  * 测试策略：
- * - App 组件首次渲染时 `degradation` 是 null，需要 createBackend 返回非空
- *   `degradationReason`（或抛错）才会走到显示分支。
+ * - 只 mock `render/backend.js` 与 `render/sceneEngine.js`（渲染侧），
+ *   store 层与业务逻辑不 mock —— 保证业务行为未被破坏。
  * - `import.meta.env.DEV` 在 Vitest/SSR transform 下是运行时可写的普通
  *   property（不像 build 时被静态替换），所以测试里可以直接赋值来切换
  *   dev / prod 分支。
- * - 只 mock `render/backend.js` 与 `render/sceneEngine.js`（渲染侧），
- *   store 层与业务逻辑不 mock —— 保证业务行为未被破坏。
+ *
+ * P26a 起删除了 P10 的 degradation 提示测试块：单后端冻结后，
+ * createBackend 不再返回 degradationReason，App 也不再渲染该提示。
  */
 
-// createBackend 真实返回：Promise<{ backend: RenderBackend, degradationReason?: string }>
-// 这里 mock 成"降级到 WebGL2"的成功结果，用于触发 UI 上的 degradation 提示。
+// createBackend 真实返回：Promise<{ backend: RenderBackend }>（P26a 起不再有 degradationReason）
 vi.mock('./render/backend.js', () => {
   const mockBackend = {
     type: 'webgl2',
     canvas: document.createElement('canvas'),
     dispose: () => {},
     setSize: () => {},
-    getBloom: () => null,
-    getGodrays: () => null,
+    getBloom: () => ({ strength: 0.22, radius: 0.3, threshold: 0.85 }),
+    getGodrays: () => ({
+      enabled: false,
+      weight: 1.0,
+      density: 0.4,
+      decay: 1.0,
+      screenRadius: 0.35,
+      sampleCount: 24,
+    }),
     setGodrays: () => {},
     setBloom: () => {},
     getRenderer: () => ({}),
@@ -39,12 +46,7 @@ vi.mock('./render/backend.js', () => {
     resize: () => {},
   };
   return {
-    createBackend: vi.fn(() =>
-      Promise.resolve({
-        backend: mockBackend,
-        degradationReason: 'WebGPU unsupported — fallback to WebGL2',
-      }),
-    ),
+    createBackend: vi.fn(() => Promise.resolve({ backend: mockBackend })),
   };
 });
 
@@ -105,36 +107,23 @@ async function flushEffects() {
   });
 }
 
-describe('App：degradation 提示的 dev/prod 可见性（P10 §交付物 3）', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.useRealTimers();
+/** 展开右侧 sidebar 的「专业模式」Panel 并勾选开关，让 RenderPanel 挂载 */
+async function enableProfessionalMode(container: HTMLElement) {
+  const header = Array.from(container.querySelectorAll('.panel-header')).find((btn) =>
+    btn.textContent?.includes('专业模式'),
+  );
+  if (!header) throw new Error('应当能定位「专业模式」面板标题');
+  await userEvent.click(header);
+  await act(async () => {
+    await Promise.resolve();
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-    // 恢复 DEV 默认值，避免污染后续测试
-    setDev(true);
-  });
-
-  it('DEV=true 时降级提示可见（.info.dev-only 渲染）', async () => {
-    setDev(true);
-    const { container } = await renderApp();
-    await flushEffects();
-    const el = container.querySelector('.info.dev-only');
-    expect(el, 'dev 模式下应当显示 .info.dev-only 元素').not.toBeNull();
-    expect(el!.textContent).toContain('WebGPU');
-  });
-
-  it('DEV=false（prod）时降级提示不渲染（.info.dev-only 不存在）', async () => {
-    setDev(false);
-    const { container } = await renderApp();
-    await flushEffects();
-    expect(container.querySelector('.info.dev-only')).toBeNull();
-    // degradation 文本本身也不该出现在页面上（避免"提示存在但被藏起来"）
-    expect(container.textContent ?? '').not.toContain('WebGPU');
-  });
-});
+  const checkbox = container.querySelector(
+    'input[type="checkbox"][aria-label="专业模式"]',
+  );
+  if (!checkbox) throw new Error('应当能定位专业模式开关');
+  await userEvent.click(checkbox);
+}
 
 describe('App：专业模式门禁（P19，§4 Day 6 j）', () => {
   beforeEach(() => {
@@ -162,22 +151,7 @@ describe('App：专业模式门禁（P19，§4 Day 6 j）', () => {
   it('勾选专业模式后三个面板出现', async () => {
     const { container } = await renderApp();
     await flushEffects();
-
-    // 「专业模式」Panel 默认收起（defaultOpen=false），先展开标题栏才能拿到 checkbox。
-    const header = Array.from(container.querySelectorAll('.panel-header')).find((btn) =>
-      btn.textContent?.includes('专业模式'),
-    );
-    expect(header, '应当能定位「专业模式」面板标题').not.toBeUndefined();
-    await userEvent.click(header!);
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    const checkbox = container.querySelector(
-      'input[type="checkbox"][aria-label="专业模式"]',
-    );
-    expect(checkbox, '应当能定位专业模式开关').not.toBeNull();
-    await userEvent.click(checkbox!);
+    await enableProfessionalMode(container);
     expect(container.textContent).toContain('照度估算');
     expect(container.textContent).toContain('渲染与项目');
     // FixturePanel 在 mock 下「未选中灯具」时依然渲染 <Panel title="灯具参数"> 与空态提示，
@@ -190,5 +164,39 @@ describe('App：专业模式门禁（P19，§4 Day 6 j）', () => {
     const { container } = await renderApp();
     await flushEffects();
     expect(container.textContent).toContain('照度估算');
+  });
+});
+
+describe('App：Bloom / Godrays 滑块的生产可见性（P26a §2.4）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    setDev(true);
+  });
+
+  it('生产模式（DEV=false）下勾选专业模式后 Bloom / Godrays 滑块不渲染', async () => {
+    setDev(false);
+    const { container } = await renderApp();
+    await flushEffects();
+    await enableProfessionalMode(container);
+    // 面板本身应挂载（用户勾了专业模式）
+    expect(container.textContent).toContain('渲染与项目');
+    // 但 Bloom / Godrays 区块应完全不渲染（DOM 里不存在）
+    expect(container.textContent ?? '').not.toContain('光晕 (Bloom)');
+    expect(container.textContent ?? '').not.toContain('体积光 (Godrays)');
+  });
+
+  it('开发模式（DEV=true）下勾选专业模式后 Bloom / Godrays 滑块渲染', async () => {
+    setDev(true);
+    const { container } = await renderApp();
+    await flushEffects();
+    await enableProfessionalMode(container);
+    expect(container.textContent).toContain('渲染与项目');
+    expect(container.textContent).toContain('光晕 (Bloom)');
+    expect(container.textContent).toContain('体积光 (Godrays)');
   });
 });
