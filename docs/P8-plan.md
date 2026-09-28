@@ -83,8 +83,8 @@ P8 六阶段全部完成，测试 310 → 435 条。时间轴经用户验收改�
 | P19 专业模式门禁（JSON / lux / XYZ / 渲染调参默认收起，§4 Day 6 j） | ✅ 已提交（`a679427`） | `docs/p19-spec.md` |
 | P20 场景曝光矩阵（§5 toneMappingExposure 半块） | ✅ 已提交（`571f310`） | — |
 | P21 导入建模地基（数据契约 + 比例尺标定 + 置信度 + 拓扑校验 + parser 预留，§6 范围 1/2/7/8） | ✅ 已提交 | `docs/p21-spec.md` |
-| P26a Phase 0 止血 · 工程（冻结 WebGPU / 时间冻结 / 布局修 / dev 面板 / perfBill） | 实现中（并行子代理） | `docs/p26a-phase0-engineering-spec.md`（2026-09-28） |
-| P26b Phase 0 止血 · 入夜画面（20:00 帧达标） | 实现中（并行子代理） | `docs/p26b-phase0-night-frames-spec.md`（2026-09-28） |
+| P26a Phase 0 止血 · 工程（冻结 WebGPU / 时间冻结 / 布局修 / dev 面板 / perfBill） | ✅ 已提交（`17d1c05` + `2765a04` vite 补丁 + `4ef725d` CLAUDE.md） | `docs/p26a-phase0-engineering-spec.md`（2026-09-28） |
+| P26b Phase 0 止血 · 入夜画面（曝光 1.0→1.6 + 夜间 ambient/hemi 兜底） | ✅ 已提交（`590c1b3`，画面判定权在用户） | `docs/p26b-phase0-night-frames-spec.md`（2026-09-28） |
 
 ### Phase 0 止血（源自 `Lumina项目审查与后续工作方案.md` §二）
 
