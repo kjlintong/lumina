@@ -40,6 +40,8 @@ import { computeBeamAngle } from './iesParser.js';
 import { createSpotlightPatternTexture } from './iesTexture.js';
 import { getIESForFixture } from './iesCache.js';
 import { buildFixtureModel } from './fixtureModels.js';
+import { SHADE_VISUAL_SCALE, SHADE_EMISSIVE_SCALE } from './shadeScale.js';
+export { SHADE_VISUAL_SCALE, SHADE_EMISSIVE_SCALE };
 
 /** 均匀球面折算系数：lm → cd（I = Φ / 4π） */
 const STERADIAN_SPHERE = 4 * Math.PI;
@@ -114,8 +116,8 @@ export function fixtureCastsShadow(type: string): boolean {
  * （规格公式另乘 shade.intensity，但 ShadeMaterial 当前无此字段，取 1）。
  * 3.0 让灯罩亮度超过 bloom threshold（0.85）被辉光抓到；MeshStandardMaterial
  * 的 emissiveIntensity 可 >1（HDR），配合 ACESFilmic 不会溢出屏幕。
+ * SHADE_EISSIVE_SCALE 定义在 ./shadeScale.js（P31 抽离，避免与 fixtureModels.ts 循环依赖）
  */
-export const SHADE_EMISSIVE_SCALE = 3.0;
 
 // ---------------------------------------------------------------------------
 // 物理量换算
@@ -196,7 +198,7 @@ function declaresIES(photometric: Photometric): boolean {
  * 只影响灯罩 Mesh 的几何尺寸；**不影响** Fixture.shape.diameter 字段
  * （`photometric` 与 `intensity` 都用真实数据），也不影响 light 的 position。
  */
-export const SHADE_VISUAL_SCALE = 6.0;
+// SHADE_VISUAL_SCALE 定义在 ./shadeScale.js（P31 抽离，避免与 fixtureModels.ts 循环依赖）
 
 // ---------------------------------------------------------------------------
 // 构建结果

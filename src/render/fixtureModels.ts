@@ -31,7 +31,7 @@ import {
   TorusGeometry,
 } from 'three';
 import type { Fixture, FixtureType, ShadeMaterial } from '../core/types.js';
-import { SHADE_VISUAL_SCALE } from './lightBuilder.js';
+import { SHADE_VISUAL_SCALE } from './shadeScale.js';
 
 /** 视觉尺度：由 lightBuilder 集中导出（P29 的 6.0，不可本地覆写）。 */
 const S = SHADE_VISUAL_SCALE;
