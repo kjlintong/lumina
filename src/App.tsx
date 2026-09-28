@@ -40,7 +40,10 @@ import { ImportPanel } from './ui/panels/ImportPanel.js';
 import { TimeAxis } from './ui/panels/TimeAxis.js';
 import { FloorPlan } from './ui/panels/FloorPlan.js';
 import { HudStats } from './ui/panels/HudStats.js';
-import type { HudStats as HudStatsData } from './ui/panels/HudStats.js';
+import type {
+  HudStats as HudStatsData,
+  LightBudgetSummary,
+} from './ui/panels/HudStats.js';
 import { BuildBadge } from './ui/panels/BuildBadge.js';
 import { UndoRedoBar } from './ui/panels/UndoRedoBar.js';
 import { useUndoRedoShortcut } from './ui/hooks/useUndoRedoShortcut.js';
@@ -333,6 +336,7 @@ export default function App() {
   // 渲染统计（P8c）：500ms 轮询 getRenderStats，不每帧 setState。
   // triangles 为 0 表示 mock 后端不支持，转成 null 让 HUD 显示 "—"。
   const [renderStats, setRenderStats] = useState<HudStatsData | null>(null);
+  const [lightBudget, setLightBudget] = useState<LightBudgetSummary | null>(null);
 
   // P26a：Bloom / Godrays 滑块只在 dev 模式（/?debug）显示；
   // 生产环境 RenderPanel 里 Bloom/Godrays 区块被隐藏。
@@ -534,6 +538,19 @@ export default function App() {
             objects: s.objects,
             fps: s.fps,
           });
+          // P34 收尾：光源预算摘要，HudStats 顶部显示「光源 X/Y 实时」提示
+          const lb = eng.getLightBudget();
+          setLightBudget(
+            lb === null
+              ? null
+              : {
+                  realCount: lb.realSet.size,
+                  total: lb.entries.length,
+                  lockedDropped: lb.entries.filter(
+                    (e) => e.isReal && e.reason === 'locked',
+                  ).length,
+                },
+          );
         }, 500);
       } catch (err) {
         if (import.meta.env.DEV) {
@@ -693,7 +710,7 @@ export default function App() {
           <UndoRedoBar />
         </div>
         <div className="hud-block">
-          <HudStats stats={renderStats} />
+          <HudStats stats={renderStats} budget={lightBudget} />
         </div>
       </div>
 
