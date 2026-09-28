@@ -40,14 +40,17 @@ import {
   Vector3,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import type { ActivityZone, Fixture } from '../core/types.js';
+import type { ActivityZone, Fixture, MountType } from '../core/types.js';
 import type { RenderBackend } from '../render/backend.js';
 import type { ModelGeometry } from '../core/modeling.js';
 import { buildActivityZone } from '../render/activityZone.js';
 import { buildDustParticles, updateDustPoints } from '../render/dustParticles.js';
 import { buildFurniture } from '../render/furniture.js';
 import { buildLightFromFixture, cctToRGB, SHADE_EMISSIVE_SCALE } from '../render/lightBuilder.js';
+import { axesForMount } from '../render/mountAxes.js';
+import { FIXTURE_GRID_M } from '../render/snapToGrid.js';
 import { buildRoom } from '../render/room.js';
 import { buildModelRoom } from '../render/modelRoomBuilder.js';
 import { modelToRoomDims } from '../render/modelPlanLayout.js';
@@ -220,6 +223,16 @@ export class SceneEngine {
   private lastTime = 0;
   private orbitControls: OrbitControls;
 
+  /**
+   * 灯具选择 / TransformControls 挂接（P28）。选中时 shade.emissiveIntensity = 0.35，
+   * 颜色 accent-warm-strong（见 updateFixtureHighlight）；未选中回落 0（走常规 applyFixtureIntensity）。
+   * attachedFixtureId = null 表示当前没有灯具挂在 TransformControls 上（gizmo 隐藏）。
+   * onTransformEnd 由 App 层通过 setTransformCallback 设置，用于把拖拽结束的新位置写回 store。
+   */
+  private transformControls: TransformControls | null = null;
+  private attachedFixtureId: string | null = null;
+  private onTransformEnd: ((fixtureId: string, newPos: readonly [number, number, number]) => void) | null = null;
+
   /** 相机机位 tween 状态（P18）；null = 无过渡在进行 */
   private cameraTween: {
     fromPos: [number, number, number];
@@ -351,6 +364,29 @@ export class SceneEngine {
     // 鼠标）。负值让相机反向转，画面内容跟着鼠标走。这是交互偏好调整，不是
     // bug 修复。
     this.orbitControls.rotateSpeed = -1;
+
+    // P28：TransformControls（灯具选择拖拽）。
+    // 注意 r186：TransformControls 不再是 Object3D，是 Controls 子类（EventDispatcher）。
+    // gizmo / plane 挂在 `getHelper()` 返回的 TransformControlsRoot 上，必须把 helper
+    // 加进场景才能被渲染；TransformControls 本体不参与场景图遍历。
+    // translationSnap = 0.05 是 three.js 内建的网格吸附（50mm，产品规格 §Phase 1 第 4 项）。
+    // dragging-changed：拖动期间禁用 OrbitControls，避免相机跟手抖。
+    // objectChange：每帧回调（拖拽过程中），暂不在此做位置修正——three 的 translationSnap
+    // 已经在拖拽内部生效；对象位置变化时会同步触发 objectChange，App 层无需订阅。
+    // mouseUp：拖拽结束，把吸附后的位置通过 onTransformEnd 回调给 App（写回 store）。
+    const tc = new TransformControls(this.camera, this.backend.canvas);
+    tc.translationSnap = FIXTURE_GRID_M;
+    tc.addEventListener('dragging-changed', (event) => {
+      this.orbitControls.enabled = !(event as { value: boolean }).value;
+    });
+    tc.addEventListener('mouseUp', () => {
+      if (this.attachedFixtureId === null) return;
+      const obj = tc.object;
+      if (!obj) return;
+      this.onTransformEnd?.(this.attachedFixtureId, [obj.position.x, obj.position.y, obj.position.z]);
+    });
+    this.scene.add(tc.getHelper());
+    this.transformControls = tc;
 
     // 光照
     this.sunLight = new DirectionalLight(0xffffff, 1);
@@ -800,6 +836,11 @@ export class SceneEngine {
 
   /** 移除灯具 */
   removeFixture(fixtureId: string): void {
+    // 若被删除的灯具仍挂在 TransformControls 上，先 detach（否则 gizmo 会指到已删除的 object）
+    if (this.attachedFixtureId === fixtureId) {
+      this.transformControls?.detach();
+      this.attachedFixtureId = null;
+    }
     const entry = this.fixtureLights.get(fixtureId);
     if (entry) {
       this.scene.remove(entry.object);
@@ -879,13 +920,23 @@ export class SceneEngine {
    * emissiveIntensity = clamp(level,0,1) * SHADE_EMISSIVE_SCALE（3.0 让灯罩超过
    * bloom threshold 0.85 被辉光抓到；HDR 值配合 ACES 不会溢出屏幕）。
    * 抽成方法：addFixture / updateFixture / setFixtureLevel 三处共用。
+   *
+   * P28 修订：若本灯当前被 attach（选中），走选中高亮分支（emissive = accent-warm-strong,
+   * intensity = 0.35），避免被 level 覆盖。未选中的灯具按常规 level * SCALE 恢复。
    */
   private applyFixtureIntensity(fixtureId: string, level: number): void {
     const entry = this.fixtureLights.get(fixtureId);
     if (!entry) return;
     if (entry.light) entry.light.intensity = entry.baseIntensity * level;
     const shadeMat = entry.shade?.material as MeshStandardMaterial | undefined;
-    if (shadeMat) shadeMat.emissiveIntensity = clamp01(level) * SHADE_EMISSIVE_SCALE;
+    if (!shadeMat) return;
+    if (fixtureId === this.attachedFixtureId) {
+      // 选中高亮：暖橙 emissive，强度 0.35（规格 §2.6）
+      shadeMat.emissive.set('#ffb27a');
+      shadeMat.emissiveIntensity = 0.35;
+    } else {
+      shadeMat.emissiveIntensity = clamp01(level) * SHADE_EMISSIVE_SCALE;
+    }
   }
 
   /**
@@ -1243,6 +1294,104 @@ export class SceneEngine {
     return this.scene;
   }
 
+  // ---------------------------------------------------------------------------
+  // P28：TransformControls 挂接 / 卸载 / 回调
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 挂接 TransformControls 到指定灯具。传 null 卸载（gizmo 隐藏）。
+   *
+   * 每次调用都重算轴约束（applyMountAxes）与选中高亮（updateFixtureHighlight）：
+   * 因为 attach 可能只是换了一盏灯，也可能切换了 mount 类型，两者都会影响 show*。
+   *
+   * 若当前有另一盏灯被 attach，先 detach 旧的、清 attachedFixtureId、再挂新的；
+   * fixtureId === null 或 fixtureLights 里没有该 id 时静默走 detach 分支（幂等）。
+   */
+  attachFixture(fixtureId: string | null, mount?: MountType): void {
+    const tc = this.transformControls;
+    if (!tc) return;
+
+    // 先卸载旧的（若已 attach）：立即复位旧灯的 emissive，避免切换瞬间旧灯仍发亮
+    if (this.attachedFixtureId !== null) {
+      const oldEntry = this.fixtureLights.get(this.attachedFixtureId);
+      tc.detach();
+      this.attachedFixtureId = null;
+      // 复位旧灯 emissive 到 level * SHADE_EMISSIVE_SCALE（不改 level 记录）
+      if (oldEntry?.shade) {
+        const mat = oldEntry.shade.material as MeshStandardMaterial | undefined;
+        if (mat) {
+          const level = this.fixtureLevels.get(oldEntry.object.name) ?? 1;
+          mat.emissiveIntensity = clamp01(level) * SHADE_EMISSIVE_SCALE;
+        }
+      }
+    }
+
+    if (fixtureId === null) {
+      return;
+    }
+    const entry = this.fixtureLights.get(fixtureId);
+    if (!entry) return;
+
+    tc.attach(entry.object);
+    if (mount) this.applyMountAxes(mount);
+    this.attachedFixtureId = fixtureId;
+    // 立即设置新灯的选中高亮
+    const mat = entry.shade?.material as MeshStandardMaterial | undefined;
+    if (mat) {
+      mat.emissive.set('#ffb27a');
+      mat.emissiveIntensity = 0.35;
+    }
+  }
+
+  /** 当前挂接的灯具 id（无则 null） */
+  getAttachedFixtureId(): string | null {
+    return this.attachedFixtureId;
+  }
+
+  /**
+   * 设置拖拽结束回调（App 层订阅，写入 store 并走命令栈）。传 null 解除。
+   * 回调签名：(fixtureId, newPos) => void；newPos 已经是 50mm 网格吸附后的世界坐标。
+   */
+  setTransformCallback(cb: ((fixtureId: string, newPos: readonly [number, number, number]) => void) | null): void {
+    this.onTransformEnd = cb;
+  }
+
+  /**
+   * 切换 TransformControls mode（R/E/Q 快捷键）。translate 是默认，rotate 用 R，scale 用 E。
+   * 注意 Q 在这里语义是「回到 translate」（不是 scale；three.js TransformControls 的 scale
+   * 用 E 才符合 Blender 惯例——translate=W/R？——按规格 §2.7 约定 R=rotate, E=scale, Q=translate）。
+   */
+  setTransformMode(mode: 'translate' | 'rotate' | 'scale'): void {
+    this.transformControls?.setMode(mode);
+  }
+
+  /**
+   * 按 mount 类型约束 TransformControls 允许的轴。
+   *
+   * three r186 的 show* 位：showX / showY / showZ（单轴）+ showXY / showXZ / showYZ / showXYZE（组合面）。
+   * 对 translateAxis = 'XZ' 想显示 XZ 平面：showX=true, showZ=true, showXZ=true；其余 false。
+   * 对 'XYZ'：全部 true。对 ''（禁用）：全部 false。
+   */
+  private applyMountAxes(mount: MountType): void {
+    const tc = this.transformControls;
+    if (!tc) return;
+    const cfg = axesForMount(mount);
+    // P28 只做 translate 的轴约束入口；rotate 通过 R/E/Q 键盘切换（不做 UI 按钮）。
+    // 三.js 会在 mode 切换时读同名的 show* 位（同一个 set 控制所有 mode），因此
+    // 这里设一次即可，无需为 rotate mode 单独重设。
+    const axis = cfg.translateAxis;
+    const hasX = axis.includes('X');
+    const hasY = axis.includes('Y');
+    const hasZ = axis.includes('Z');
+    tc.showX = hasX;
+    tc.showY = hasY;
+    tc.showZ = hasZ;
+    tc.showXY = hasX && hasY;
+    tc.showXZ = hasX && hasZ;
+    tc.showYZ = hasY && hasZ;
+    tc.showXYZE = hasX && hasY && hasZ;
+  }
+
   /** 获取相机 */
   getCamera(): PerspectiveCamera {
     return this.camera;
@@ -1399,6 +1548,14 @@ export class SceneEngine {
   dispose(): void {
     this.stop();
     this.orbitControls.dispose();
+    // P28：清理 TransformControls（注意 r186：不是 Object3D，先 dispose 再 remove helper）
+    if (this.transformControls) {
+      this.transformControls.dispose();
+      this.scene.remove(this.transformControls.getHelper());
+      this.transformControls = null;
+    }
+    this.attachedFixtureId = null;
+    this.onTransformEnd = null;
     // 清理 P8b 体积光 / 尘埃粒子（CanvasTexture + BufferGeometry 都需显式释放）
     if (this.dustPoints) {
       this.scene.remove(this.dustPoints);

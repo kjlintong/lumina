@@ -150,6 +150,21 @@ function FixtureForm({ fixture }: { fixture: Fixture }) {
           />
         </div>
       </div>
+
+      {/* P28：删除按钮。走 removeFixture（命令栈可撤销）。 */}
+      <div className="fixture-form-actions">
+        <button
+          type="button"
+          className="btn btn-danger"
+          onClick={() => {
+            useProjectStore.getState().removeFixture(id);
+            useProjectStore.getState().selectFixture(null);
+            useProjectStore.getState().setNotice('已删除灯具（可 Ctrl+Z 撤销）');
+          }}
+        >
+          删除灯具
+        </button>
+      </div>
     </div>
   );
 }

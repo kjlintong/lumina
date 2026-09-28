@@ -8,6 +8,9 @@ import type { BloomSettings } from './render/postProcessing.js';
 import type { GodraysSettings } from './render/godrays.js';
 import { DEFAULT_GODRAYS } from './render/godrays.js';
 import { preloadIESFiles } from './render/iesCache.js';
+import { dropPosFromHit, mountFromNormal } from './render/mountFromNormal.js';
+import { snapFixturePos } from './render/snapToGrid.js';
+import { LUMINA_FIXTURE_DND_MIME } from './ui/panels/FixtureLibraryPanel.js';
 import { serializeProject, deserializeProject } from './core/serialize.js';
 import { SceneEngine } from './scene/sceneEngine.js';
 import { SceneController } from './scene/sceneController.js';
@@ -20,6 +23,7 @@ import {
 import { Panel } from './ui/panels/Panel.js';
 import { ZonePanel } from './ui/panels/ZonePanel.js';
 import { FixturePanel } from './ui/panels/FixturePanel.js';
+import { FixtureLibraryPanel } from './ui/panels/FixtureLibraryPanel.js';
 import { CameraPanel } from './ui/panels/CameraPanel.js';
 import { ScenePanel } from './ui/panels/ScenePanel.js';
 import { IlluminancePanel } from './ui/panels/IlluminancePanel.js';
@@ -197,6 +201,65 @@ function pickFixture(engine: SceneEngine, canvas: HTMLCanvasElement, clientX: nu
   }
 }
 
+/**
+ * P28：从「灯具库」拖放到 canvas 上，raycast 命中场景几何体后创建新灯具。
+ *
+ * 流程：
+ *   1. 从 dataTransfer 读取类型（'application/x-lumina-fixture-type'）
+ *   2. 用 canvas 屏幕坐标 → NDC → 世界坐标 raycast
+ *   3. 命中第一个带面法线的 Mesh → mountFromNormal 推断 mount
+ *   4. dropPosFromHit + snapFixturePos 得到吸附后的落点
+ *   5. addFixture（走命令栈，可撤销）
+ *   6. selectFixture 选中它（触发 attachFixture 挂 TransformControls）
+ *   7. 未命中 → setNotice 提示
+ *
+ * 复用 pickFixture 的 raycaster/pointerNdc（模块级），避免每次 drop 都 new。
+ */
+function handleDropFixture(
+  e: React.DragEvent<HTMLDivElement>,
+  engine: SceneEngine,
+  canvas: HTMLCanvasElement,
+): void {
+  e.preventDefault();
+  const fixtureType = e.dataTransfer.getData(LUMINA_FIXTURE_DND_MIME);
+  if (!fixtureType) return;
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
+  pointerNdc.set(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  raycaster.setFromCamera(pointerNdc, engine.getCamera());
+  const hits = raycaster.intersectObjects(engine.getScene().children, true);
+  // 找第一个命中几何体（墙体/地面/天花都是 Mesh；跳过灯具子 mesh，让 drop 只落在环境面上）
+  const store = useProjectStore.getState();
+  for (const hit of hits) {
+    const face = hit.face;
+    if (!face) continue;
+    // 命中面法线是世界空间（raycaster 已按 matrixWorld 转换）
+    const nx = face.normal.x;
+    const ny = face.normal.y;
+    const nz = face.normal.z;
+    const mount = mountFromNormal([nx, ny, nz]);
+    const point = hit.point;
+    const rawPos = dropPosFromHit([point.x, point.y, point.z], [nx, ny, nz]);
+    const snapped = snapFixturePos(rawPos);
+    const id = store.addFixture({
+      type: fixtureType as 'downlight' | 'spot' | 'pendant' | 'linear' | 'cove' | 'sconce' | 'floor' | 'table',
+      mount,
+      pos: snapped,
+    });
+    store.selectFixture(id);
+    // addFixture 走命令栈（executeAndPush），store 已同步。engine 通过
+    // App 的 store.subscribe 自动 addFixture 进场景图；attachFixture 由
+    // selectedFixtureId 变化的 useEffect 触发。此处无需手动 attach。
+    store.setNotice(`已添加灯具（可 Ctrl+Z 撤销）`);
+    return;
+  }
+  // 未命中
+  store.setNotice('请拖到墙、天花或地面');
+}
+
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
@@ -218,7 +281,8 @@ export default function App() {
   const controllerRef = useRef<SceneController | null>(null);
 
   // Phase 1：全局 Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y 快捷键（input 保护）
-  useUndoRedoShortcut();
+  // P28：追加 R/E/Q 切 TransformControls mode、Esc 取消选中、Delete 删除选中灯具
+  useUndoRedoShortcut(engineRef);
 
   const [ready, setReady] = useState(false);
   const [backendType, setBackendType] = useState<BackendType>('webgl2');
@@ -542,9 +606,56 @@ export default function App() {
   const [th, tm] = timeValue.split(':').map(Number);
   const axisHour = (th ?? 0) + (tm ?? 0) / 60;
 
+  // P28：订阅 selectedFixtureId 变化 → attach/detach TransformControls
+  // 与 store.subscribe 的关系：store.subscribe 是 transient（不触发 React 重渲染），
+  // 此处用 React 订阅让 attachFixture 在选中态变化时执行。engine 已就绪才生效。
+  const selectedFixtureId = useProjectStore((s) => s.selectedFixtureId);
+  const project = useProjectStore((s) => s.project);
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    if (selectedFixtureId === null) {
+      eng.attachFixture(null);
+      return;
+    }
+    const f = project.fixtures[selectedFixtureId];
+    if (!f) {
+      eng.attachFixture(null);
+      return;
+    }
+    eng.attachFixture(selectedFixtureId, f.mount);
+  }, [selectedFixtureId, project, ready]);
+
+  // P28：设置拖拽结束回调 → 写入 store 并走命令栈（可撤销）
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    eng.setTransformCallback((fixtureId, newPos) => {
+      useProjectStore.getState().moveAndLockFixture(fixtureId, newPos);
+      useProjectStore.getState().setNotice(
+        `已移动 ${fixtureId.slice(0, 6)}… 到 (${newPos[0].toFixed(2)}, ${newPos[1].toFixed(2)}, ${newPos[2].toFixed(2)})`,
+      );
+    });
+    return () => {
+      eng.setTransformCallback(null);
+    };
+  }, [ready]);
+
   return (
     <div className="app-root">
-      <div ref={canvasContainerRef} className="canvas-container" />
+      <div
+        ref={canvasContainerRef}
+        className="canvas-container"
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }}
+        onDrop={(e) => {
+          const eng = engineRef.current;
+          const bkd = backendRef.current;
+          if (eng && bkd) handleDropFixture(e, eng, bkd.canvas);
+        }}
+      />
 
       {notice && <div className="toast">{notice}</div>}
 
@@ -569,6 +680,7 @@ export default function App() {
           <div className="sidebar-content">
             <FloorPlan />
             <ImportPanel />
+            <FixtureLibraryPanel />
             <ModelPanel />
             <ModelPlan />
             <ModelCanvas />

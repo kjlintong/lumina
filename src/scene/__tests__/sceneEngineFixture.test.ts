@@ -170,3 +170,84 @@ describe('SceneEngine 灯具更新（P3 缺口 1/2）', () => {
     expect(engine.getFixtureLevel('fx-a')).toBe(0.6);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P28：TransformControls 挂接 / 卸载 / 回调
+// ---------------------------------------------------------------------------
+
+describe('SceneEngine P28 TransformControls', () => {
+  it('attachFixture 挂接 TransformControls，选中高亮生效', () => {
+    const engine = new SceneEngine(createMockBackend());
+    const fixture = makeFixture({ type: 'pendant', pos: [0, 2.0, 0], lumens: 800, cct: 3000 });
+    engine.addFixture(fixture);
+    expect(engine.getAttachedFixtureId()).toBeNull();
+
+    engine.attachFixture(fixture.id, 'suspended');
+
+    expect(engine.getAttachedFixtureId()).toBe(fixture.id);
+    // 高亮验证：shade emissiveIntensity > 0（选中高亮 0.35）
+    const entry = (engine as unknown as {
+      fixtureLights: Map<string, { shade: { material: { emissiveIntensity: number } } } | undefined>;
+    }).fixtureLights.get(fixture.id);
+    expect(entry?.shade.material.emissiveIntensity).toBeGreaterThan(0);
+    // translationSnap = 0.05 已设置
+    const tc = (engine as unknown as { transformControls: { translationSnap: number } | null }).transformControls;
+    expect(tc?.translationSnap).toBe(0.05);
+  });
+
+  it('attachFixture(null) 卸载，attachedFixtureId 归 null', () => {
+    const engine = new SceneEngine(createMockBackend());
+    const fixture = makeFixture({ type: 'pendant', pos: [0, 2.0, 0], lumens: 800, cct: 3000 });
+    engine.addFixture(fixture);
+    engine.attachFixture(fixture.id, 'suspended');
+    expect(engine.getAttachedFixtureId()).toBe(fixture.id);
+
+    engine.attachFixture(null);
+    expect(engine.getAttachedFixtureId()).toBeNull();
+  });
+
+  it('setTransformCallback 触发 → onTransformEnd 回调拿到 (fixtureId, newPos)', () => {
+    const engine = new SceneEngine(createMockBackend());
+    const fixture = makeFixture({ type: 'pendant', pos: [0, 2.0, 0], lumens: 800, cct: 3000 });
+    engine.addFixture(fixture);
+    engine.attachFixture(fixture.id, 'suspended');
+
+    let capturedId: string | null = null;
+    let capturedPos: readonly [number, number, number] | null = null;
+    engine.setTransformCallback((id, pos) => {
+      capturedId = id;
+      capturedPos = pos;
+    });
+
+    // 手动调用 mouseUp 分支的回调（跳过真实拖拽；jsdom 无法模拟 TransformControls gizmo 交互）
+    (engine as unknown as { onTransformEnd?: ((id: string, p: readonly [number, number, number]) => void) | null }).onTransformEnd?.(fixture.id, [1, 2, 3]);
+
+    expect(capturedId).toBe(fixture.id);
+    expect(capturedPos).toEqual([1, 2, 3]);
+
+    // 解绑
+    engine.setTransformCallback(null);
+    expect((engine as unknown as { onTransformEnd: unknown }).onTransformEnd).toBeNull();
+  });
+
+  it('removeFixture 挂接中的灯具时自动 detach', () => {
+    const engine = new SceneEngine(createMockBackend());
+    const fixture = makeFixture({ type: 'pendant', pos: [0, 2.0, 0], lumens: 800, cct: 3000 });
+    engine.addFixture(fixture);
+    engine.attachFixture(fixture.id, 'suspended');
+    expect(engine.getAttachedFixtureId()).toBe(fixture.id);
+
+    engine.removeFixture(fixture.id);
+    expect(engine.getAttachedFixtureId()).toBeNull();
+  });
+
+  it('setTransformMode 切 mode 不抛错', () => {
+    const engine = new SceneEngine(createMockBackend());
+    const fixture = makeFixture({ type: 'pendant', pos: [0, 2.0, 0], lumens: 800, cct: 3000 });
+    engine.addFixture(fixture);
+    engine.attachFixture(fixture.id, 'suspended');
+    expect(() => engine.setTransformMode('rotate')).not.toThrow();
+    expect(() => engine.setTransformMode('scale')).not.toThrow();
+    expect(() => engine.setTransformMode('translate')).not.toThrow();
+  });
+});

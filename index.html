@@ -244,6 +244,17 @@
 
     .toast { position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%); background: var(--bg-toast); color: var(--accent-warm-strong); padding: 10px 18px; border-radius: var(--radius-md); font-size: var(--font-size-md); border: var(--border-toast); z-index: 10; animation: toast-in .25s ease; }
     @keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+
+    /* P28 灯具库 */
+    .fixture-library-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+    .fixture-library-item { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--bg-panel); border: 1px solid var(--border-subtle); border-radius: 4px; cursor: grab; user-select: none; }
+    .fixture-library-item:active { cursor: grabbing; }
+    .fixture-library-item:hover { border-color: var(--accent-warm); }
+    .fixture-library-icon { width: 24px; height: 24px; color: var(--accent-warm); flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+    .fixture-library-label { font-size: 12px; color: var(--text-primary); font-weight: 500; flex: 1; min-width: 0; }
+    .fixture-library-hint { font-size: 10px; color: var(--text-muted); font-weight: 400; margin-top: 2px; }
+
+    .fixture-form-actions { display: flex; gap: 6px; margin-top: 4px; }
   </style>
 </head>
 <body>
