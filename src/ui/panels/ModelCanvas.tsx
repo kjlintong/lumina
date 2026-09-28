@@ -9,7 +9,10 @@ import {
   modelPlanOrigin,
   computeModelScale,
   GRID_SNAP_M,
+  snapEndpoint,
+  collectSnapCandidates,
 } from '../../render/modelPlanLayout.js';
+import type { SnapCandidate } from '../../render/modelPlanLayout.js';
 
 /**
  * 描墙画布（P22 §3.4）。
@@ -31,18 +34,21 @@ export function ModelCanvas() {
     pendingRoomName,
     gridSnap,
     orthoSnap,
+    endpointSnap,
     isDrawing,
     addPendingVertex,
     cancelPending,
     commitRoom,
     setGridSnap,
     setOrthoSnap,
+    setEndpointSnap,
     startDrawing,
     stopDrawing,
   } = useModelingStore();
 
   const [roomName, setRoomName] = useState(pendingRoomName);
   const [mouseWorld, setMouseWorld] = useState<readonly [number, number] | null>(null);
+  const [hoverSnap, setHoverSnap] = useState<SnapCandidate | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const width = 400;
   const height = 400;
@@ -55,10 +61,14 @@ export function ModelCanvas() {
     : 40; // 默认 40 px/m（空画布）
 
   // 鼠标 SVG 坐标 → 世界坐标 → 吸附
-  const getWorldPoint = useCallback(
-    (clientX: number, clientY: number): readonly [number, number] | null => {
+  // 顺序：网格 → 正交 → 端点（端点最后，优先级最高：吸到具体点，覆盖网格与角度）
+  const snapResult = useCallback(
+    (clientX: number, clientY: number): {
+      p: readonly [number, number] | null;
+      snapped: SnapCandidate | null;
+    } => {
       const svg = svgRef.current;
-      if (svg === null) return null;
+      if (svg === null) return { p: null, snapped: null };
       const rect = svg.getBoundingClientRect();
       const sx = ((clientX - rect.left) / rect.width) * width;
       const sy = ((clientY - rect.top) / rect.height) * height;
@@ -67,28 +77,34 @@ export function ModelCanvas() {
       if (orthoSnap && pendingVertices.length > 0) {
         [wx, wz] = snapOrtho(pendingVertices[pendingVertices.length - 1]!, [wx, wz]);
       }
-      return [wx, wz] as readonly [number, number];
+      const snapped = endpointSnap
+        ? snapEndpoint([wx, wz], collectSnapCandidates(model, pendingVertices))
+        : null;
+      if (snapped) return { p: [snapped.x, snapped.z] as const, snapped };
+      return { p: [wx, wz] as const, snapped: null };
     },
-    [gridSnap, orthoSnap, pendingVertices, ox, oy, scale],
+    [gridSnap, orthoSnap, endpointSnap, model, pendingVertices, ox, oy, scale],
   );
 
   // onPointerMove：更新预览线
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
       if (!isDrawing) return;
-      setMouseWorld(getWorldPoint(e.clientX, e.clientY));
+      const r = snapResult(e.clientX, e.clientY);
+      setMouseWorld(r.p);
+      setHoverSnap(r.snapped);
     },
-    [isDrawing, getWorldPoint],
+    [isDrawing, snapResult],
   );
 
   // onClick：追加顶点
   const onClick = useCallback(
     (e: React.MouseEvent) => {
       if (!isDrawing) return;
-      const p = getWorldPoint(e.clientX, e.clientY);
+      const p = snapResult(e.clientX, e.clientY).p;
       if (p !== null) addPendingVertex([p[0], p[1]]);
     },
-    [isDrawing, getWorldPoint, addPendingVertex],
+    [isDrawing, snapResult, addPendingVertex],
   );
 
   // Esc 取消
@@ -189,6 +205,19 @@ export function ModelCanvas() {
           </g>
         )}
 
+        {/* 吸附高亮（P33）：hover 到的最近端点画一个橙色环，压在所有已放置顶点之上 */}
+        {isDrawing && hoverSnap && (
+          <circle
+            cx={toSvg(hoverSnap.x, hoverSnap.z).x}
+            cy={toSvg(hoverSnap.x, hoverSnap.z).y}
+            r={7}
+            fill="none"
+            stroke="#f0a040"
+            strokeWidth={2}
+            style={{ pointerEvents: 'none' }}
+          />
+        )}
+
         {/* 已放置顶点 → 小圆 */}
         {pendingVertices.map((v, i) => {
           const p = toSvg(v[0], v[1]);
@@ -270,6 +299,14 @@ export function ModelCanvas() {
                 onChange={(e) => setOrthoSnap(e.target.checked)}
               />
               正交
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 2, color: 'rgba(255,255,255,0.6)' }}>
+              <input
+                type="checkbox"
+                checked={endpointSnap}
+                onChange={(e) => setEndpointSnap(e.target.checked)}
+              />
+              端点
             </label>
 
             <input

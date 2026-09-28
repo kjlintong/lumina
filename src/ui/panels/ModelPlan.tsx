@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useModelingStore } from '../../store/modelingStore.js';
 import { isLowConfidence } from '../../core/confidence.js';
 import {
@@ -8,6 +8,8 @@ import {
   openingsToSvg,
   modelPlanOrigin,
   computeModelScale,
+  wallLabels,
+  roomLabels,
 } from '../../render/modelPlanLayout.js';
 
 /**
@@ -33,6 +35,7 @@ export function ModelPlan() {
     () => (bounds ? computeModelScale(bounds, { width, height }) : 0),
     [bounds, width, height],
   );
+  const [showDims, setShowDims] = useState(false);
 
   if (!bounds) {
     return (
@@ -94,20 +97,56 @@ export function ModelPlan() {
           />
         ))}
 
-        {/* 房间标签 */}
-        {rooms.map((r) => (
-          <text
-            key={`label-${r.id}`}
-            x={r.cx}
-            y={r.cy}
-            textAnchor="middle"
-            fill="rgba(255, 255, 255, 0.5)"
-            fontSize={10}
-            style={{ userSelect: 'none' }}
-          >
-            {r.name}
-          </text>
-        ))}
+        {/* 墙段尺寸标注（P33） */}
+        {showDims &&
+          wallLabels(model.walls, ox, oy, scale).map((l, i) => (
+            <text
+              key={`wlabel-${i}`}
+              x={l.x}
+              y={l.y}
+              textAnchor="middle"
+              fill="rgba(255, 255, 255, 0.7)"
+              fontSize={9}
+              transform={`rotate(${l.angle} ${l.x} ${l.y})`}
+              style={{ userSelect: 'none' }}
+            >
+              {l.text}
+            </text>
+          ))}
+
+        {/* 房间标签（P33：可选追加面积行） */}
+        {showDims
+          ? roomLabels(model.rooms, ox, oy, scale).map((l) => (
+              <text
+                key={`rlabel-${l.name}`}
+                x={l.x}
+                y={l.y}
+                textAnchor="middle"
+                fill="rgba(255, 255, 255, 0.6)"
+                fontSize={10}
+                style={{ userSelect: 'none' }}
+              >
+                <tspan x={l.x} dy={0}>
+                  {l.name}
+                </tspan>
+                <tspan x={l.x} dy={12}>
+                  {l.areaText}
+                </tspan>
+              </text>
+            ))
+          : rooms.map((r) => (
+              <text
+                key={`label-${r.id}`}
+                x={r.cx}
+                y={r.cy}
+                textAnchor="middle"
+                fill="rgba(255, 255, 255, 0.5)"
+                fontSize={10}
+                style={{ userSelect: 'none' }}
+              >
+                {r.name}
+              </text>
+            ))}
       </svg>
 
       {/* 面积显示 */}
@@ -122,6 +161,28 @@ export function ModelPlan() {
       >
         {model.rooms.length} 房间 · {model.walls.length} 墙段
       </div>
+
+      {/* 尺寸标注开关（P33） */}
+      <label
+        style={{
+          position: 'absolute',
+          top: 6,
+          right: 8,
+          fontSize: 11,
+          color: 'rgba(255, 255, 255, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 3,
+          cursor: 'pointer',
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={showDims}
+          onChange={(e) => setShowDims(e.target.checked)}
+        />
+        尺寸
+      </label>
     </div>
   );
 }

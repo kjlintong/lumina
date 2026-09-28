@@ -129,4 +129,13 @@ describe('ModelCanvas component (P22 §4 modelCanvas.test.tsx)', () => {
     const gridLines = container.querySelectorAll('[opacity="0.15"] line');
     expect(gridLines.length).toBeGreaterThan(0);
   });
+
+  it('exposes endpointSnap state, default on (P33)', () => {
+    const { container } = render(<ModelCanvas />);
+    fireEvent.click(screen.getByText('描墙'));
+    // 描墙模式下控制栏应出现 3 个 checkbox：网格 / 正交 / 端点
+    const boxes = container.querySelectorAll('input[type="checkbox"]');
+    expect(boxes.length).toBe(3);
+    expect(useModelingStore.getState().endpointSnap).toBe(true);
+  });
 });

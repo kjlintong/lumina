@@ -286,5 +286,173 @@ export function modelPlanOrigin(config: ModelPlanViewConfig): { ox: number; oy: 
   return { ox: config.width / 2, oy: config.height / 2 };
 }
 
+// ---------------------------------------------------------------------------
+// 端点吸附（P33）
+// ---------------------------------------------------------------------------
+
+/** 端点吸附候选点（世界坐标，米） */
+export interface SnapCandidate {
+  x: number;
+  z: number;
+}
+
+/**
+ * 端点吸附半径（米）。
+ *
+ * 取 0.15：大于 `GRID_SNAP_M`（0.1）保证端点优先于网格；小于 0.3 保证不误吸
+ * 到远处顶点（住宅户型最小开间 2.7m，0.15m 半径在正常鼠标操作下已足够宽容）。
+ */
+export const ENDPOINT_SNAP_RADIUS_M = 0.15;
+
+/**
+ * 从候选集中吸附最近端点。
+ *
+ * 严格小于等于 `radiusM` 的候选中取最近的一个；无候选或全部超出半径返回 null。
+ * 等距时取遍历到的第一个（保持结果稳定，便于测试）。
+ */
+export function snapEndpoint(
+  p: readonly [x: number, z: number],
+  candidates: readonly SnapCandidate[],
+  radiusM: number = ENDPOINT_SNAP_RADIUS_M,
+): SnapCandidate | null {
+  let best: SnapCandidate | null = null;
+  let bestDist = radiusM;
+  for (const c of candidates) {
+    // abs 屏蔽 IEEE 754 -0/+0 假 tie；用 < 而不是 <= 保证等距时取遍历到的第一个
+    const d = Math.hypot(Math.abs(c.x - p[0]), Math.abs(c.z - p[1]));
+    if (d < bestDist) {
+      bestDist = d;
+      best = c;
+    }
+  }
+  return best;
+}
+
+/**
+ * 汇总吸附候选点。
+ *
+ * 来源：`model.walls` 每个端点（a/b）+ `model.rooms` 每个顶点 +
+ * 当前已放置的 `pendingVertices`（**排除最后一个**，因为它就是"上一顶点"，
+ * 不该吸附回自己；保留前面的点便于闭合多边形时吸附回首点）。
+ *
+ * 不去重：候选集通常几十到几百个，去重的复杂度不值得；`snapEndpoint` 取
+ * 最近的那个即可，同一点重复出现只是多做几次 hypot。
+ */
+export function collectSnapCandidates(
+  model: ModelGeometry,
+  pendingVertices: readonly (readonly [x: number, z: number])[] = [],
+): SnapCandidate[] {
+  const out: SnapCandidate[] = [];
+  for (const w of model.walls) {
+    out.push({ x: w.a[0], z: w.a[1] });
+    out.push({ x: w.b[0], z: w.b[1] });
+  }
+  for (const r of model.rooms) {
+    for (const v of r.vertices) out.push({ x: v[0], z: v[1] });
+  }
+  for (let i = 0; i + 1 < pendingVertices.length; i++) {
+    const v = pendingVertices[i]!;
+    out.push({ x: v[0], z: v[1] });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// 尺寸标注（P33）
+// ---------------------------------------------------------------------------
+
+/** 墙段尺寸标注：SVG 中点偏移 8px 沿墙法线外侧，文本 = `2.40m` */
+export interface WallLabel {
+  /** SVG 坐标（已含偏移），直接用于 `<text x={x} y={y}>` */
+  x: number;
+  y: number;
+  /** 已格式化的长度文本 */
+  text: string;
+  /** 文本旋转角（度）；轴对齐墙（水平/竖直）为 0，斜墙沿墙方向 */
+  angle: number;
+}
+
+/**
+ * 墙段 → 标注。
+ *
+ * 位置：墙 SVG 中点沿法线外侧偏移 8px（避免压墙线）。
+ * 角度：轴对齐墙（与水平/竖直夹角 < 15°）保持文本水平；斜墙沿墙方向旋转，
+ * 并翻转 180° 保证文本不朝下（`raw > 90 → raw - 180`）。
+ */
+export function wallLabels(
+  walls: readonly WallSegment[],
+  ox: number,
+  oy: number,
+  scale: number,
+): WallLabel[] {
+  const out: WallLabel[] = [];
+  for (const w of walls) {
+    const a = worldToPlan(w.a[0], w.a[1], ox, oy, scale);
+    const b = worldToPlan(w.b[0], w.b[1], ox, oy, scale);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const svgLen = Math.hypot(dx, dy);
+    if (svgLen === 0) continue;
+    const ux = dx / svgLen;
+    const uy = dy / svgLen;
+    // 法线（左侧）；偏移 8px 让文本落在墙线外侧
+    const px = -uy * 8;
+    const py = ux * 8;
+    const raw = (Math.atan2(dy, dx) * 180) / Math.PI;
+    let angle = 0;
+    if (Math.abs(Math.abs(raw) - 90) > ORTHO_ANGLE_DEG && Math.abs(raw) > ORTHO_ANGLE_DEG) {
+      angle = raw > 90 ? raw - 180 : raw;
+    }
+    out.push({
+      x: (a.x + b.x) / 2 + px,
+      y: (a.y + b.y) / 2 + py,
+      text: `${wallLength(w).toFixed(2)}m`,
+      angle,
+    });
+  }
+  return out;
+}
+
+/** 房间尺寸标注：SVG 质心，含面积 */
+export interface RoomLabel {
+  x: number;
+  y: number;
+  name: string;
+  area: number;
+  areaText: string;
+}
+
+/**
+ * 房间 → 标注。
+ *
+ * 位置取顶点均值（与 `roomsToPaths` 的 `cx`/`cy` 一致）；面积走
+ * `topology.roomArea`（shoelace 公式，无需预先闭合）。
+ */
+export function roomLabels(
+  rooms: readonly RoomPolygon[],
+  ox: number,
+  oy: number,
+  scale: number,
+): RoomLabel[] {
+  return rooms.map((r) => {
+    const pts = r.vertices.map(([x, z]) => worldToPlan(x, z, ox, oy, scale));
+    let cx = 0;
+    let cy = 0;
+    for (const p of pts) {
+      cx += p.x;
+      cy += p.y;
+    }
+    const n = pts.length || 1;
+    const area = roomArea(r);
+    return {
+      x: cx / n,
+      y: cy / n,
+      name: r.name,
+      area,
+      areaText: `${area.toFixed(2)}㎡`,
+    };
+  });
+}
+
 // re-export roomArea 供调用方使用（避免重复 import）
 export { roomArea, wallLength };

@@ -74,6 +74,7 @@ interface ModelingState {
   pendingRoomName: string;
   gridSnap: boolean;
   orthoSnap: boolean;
+  endpointSnap: boolean;
   isDrawing: boolean;
 
   // P23：上传与标定
@@ -90,6 +91,7 @@ interface ModelingState {
   commitRoom: (roomName: string) => void;
   setGridSnap: (v: boolean) => void;
   setOrthoSnap: (v: boolean) => void;
+  setEndpointSnap: (v: boolean) => void;
   startDrawing: () => void;
   stopDrawing: () => void;
   importImage: (file: File) => void;
@@ -142,6 +144,7 @@ export const useModelingStore = create<ModelingState>()(
     pendingRoomName: '房间',
     gridSnap: true,
     orthoSnap: true,
+    endpointSnap: true,
     isDrawing: false,
     importedImage: null,
     importImageName: null,
@@ -231,6 +234,7 @@ export const useModelingStore = create<ModelingState>()(
 
     setGridSnap: (v) => set({ gridSnap: v }),
     setOrthoSnap: (v) => set({ orthoSnap: v }),
+    setEndpointSnap: (v) => set({ endpointSnap: v }),
     startDrawing: () => set({ isDrawing: true }),
     stopDrawing: () => set({ isDrawing: false }),
 
