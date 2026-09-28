@@ -8,8 +8,9 @@ import { fileURLToPath } from 'node:url';
  * Vite 配置。
  *
  * 关键约束（见 docs/00-p0-version-verification.md）：
- * - three@0.186 是拆包 ESM：`three` / `three/webgpu` / `three/tsl` 三个 entry。
+ * - three@0.186 是拆包 ESM：`three` / `three/tsl` 等 entry。
  *   Vite 对 ESM bare import 处理正常，无需优化器干预。
+ * - P26a：WebGL2 单后端，不再排除或加载 `three/webgpu`。
  * - 禁止引入 `three/addons` 桶文件（其内部含 CDN URL，Node ESM 下不可解析），
  *   一律按具体路径导入，例如 `three/addons/postprocessing/OutputPass.js`。
  */
@@ -30,16 +31,18 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    exclude: ['three', 'three/webgpu', 'three/tsl'],
+    exclude: ['three', 'three/tsl'],
   },
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 1600,
     rollupOptions: {
       output: {
+        // P26a：删除 'three-webgpu' manualChunk。WebGL2 单后端后 src 里已无
+        // import 'three/webgpu'，保留该条目会让 Rollup 强制创建一个 0 字节
+        // three-webgpu-*.js 空 chunk 污染 dist/assets。
         manualChunks: {
           three: ['three'],
-          'three-webgpu': ['three/webgpu'],
         },
       },
     },
