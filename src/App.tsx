@@ -231,10 +231,15 @@ function handleDropFixture(
   );
   raycaster.setFromCamera(pointerNdc, engine.getCamera());
   const hits = raycaster.intersectObjects(engine.getScene().children, true);
-  // 找第一个"不在灯具 group 内部"的命中面（墙体/地面/天花都是 Mesh）。
-  // P29b 修复：默认工程已有 3 盏灯的灯罩（SHADE_VISUAL_SCALE=6 后视觉直径 ~1.3m），
-  // 若直接取第一个 hit，很可能落在旧灯罩上（灯罩 mesh 是球/圆柱），新灯被塞到
-  // 旧灯罩内部，从下方看不见；且法线判定错乱。必须跳过所有 fixture 内部命中。
+  // 找第一个"可放置表面"命中：既不是灯具 group 内部，又有 mesh face。
+  // 两条 skip 缺一不可：
+  // 1) 跳过 fixture 内部（P29b）：SHADE_VISUAL_SCALE 后旧灯罩直径 ~1.3m，
+  //    直接取第一个 hit 会塞进旧灯罩内部，新灯被藏住、法线判定错乱。
+  // 2) 跳过无 face 的 hit：dust-particles (Points)、light-shaft (半透明柱)、
+  //    decor-plants (叶子球)、SpotLight/DirectionalLight 的 target helper 都是
+  //    可见对象但不是可放置表面，它们没有 triangle face 也就没法推安装法线。
+  //    若只跳过 fixture，第一个 hit 常落在这些无 face 的装饰/粒子/helper 上，
+  //    走到末尾 !hitUsed.face 就报"请拖到墙、天花或地面"——即 P32a 的回归根因。
   const fixtureIds = new Set(Object.keys(useProjectStore.getState().project.fixtures));
   const isFixtureHit = (obj: import('three').Object3D): boolean => {
     let cur: import('three').Object3D | null = obj;
@@ -250,6 +255,7 @@ function handleDropFixture(
   let hitUsed: typeof hits[0] | undefined;
   for (const hit of hits) {
     if (isFixtureHit(hit.object)) continue;
+    if (!hit.face) continue;
     hitUsed = hit;
     break;
   }
