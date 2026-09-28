@@ -286,17 +286,18 @@ export const useProjectStore = create<ProjectState>()(
       pushCommand({
         label,
         execute: () => {
-          get().project = {
-            ...get().project,
-            fixtures: { ...get().project.fixtures, [fixtureSnapshot.id]: fixtureSnapshot },
-          };
-          get().selectedFixtureId = fixtureSnapshot.id;
+          const p = get().project;
+          set({
+            project: { ...p, fixtures: { ...p.fixtures, [fixtureSnapshot.id]: fixtureSnapshot } },
+            selectedFixtureId: fixtureSnapshot.id,
+          });
         },
         undo: () => {
-          get().project = binding.removeFixture(get().project, fixtureSnapshot.id);
-          if (get().selectedFixtureId === fixtureSnapshot.id) {
-            get().selectedFixtureId = null;
-          }
+          const p = get().project;
+          set({
+            project: binding.removeFixture(p, fixtureSnapshot.id),
+            selectedFixtureId: get().selectedFixtureId === fixtureSnapshot.id ? null : get().selectedFixtureId,
+          });
         },
       });
       return fixture.id;
@@ -312,15 +313,17 @@ export const useProjectStore = create<ProjectState>()(
       pushCommand({
         label: `删除${FIXTURE_TYPE_LABELS[cur.type] ?? '灯具'}`,
         execute: () => {
-          get().project = binding.removeFixture(get().project, fixtureId);
-          get().selectedFixtureId = get().selectedFixtureId === fixtureId ? null : get().selectedFixtureId;
+          const p = get().project;
+          set({
+            project: binding.removeFixture(p, fixtureId),
+            selectedFixtureId: get().selectedFixtureId === fixtureId ? null : get().selectedFixtureId,
+          });
         },
         undo: () => {
-          get().project = {
-            ...before,
-            fixtures: { ...before.fixtures, [fixtureSnap.id]: fixtureSnap },
-          };
-          get().selectedFixtureId = beforeSelected;
+          set({
+            project: { ...before, fixtures: { ...before.fixtures, [fixtureSnap.id]: fixtureSnap } },
+            selectedFixtureId: beforeSelected,
+          });
         },
       });
     },
@@ -355,16 +358,12 @@ export const useProjectStore = create<ProjectState>()(
       pushCommand({
         label: '修改灯具',
         execute: () => {
-          get().project = {
-            ...get().project,
-            fixtures: { ...get().project.fixtures, [fixtureId]: afterSnap },
-          };
+          const p = get().project;
+          set({ project: { ...p, fixtures: { ...p.fixtures, [fixtureId]: afterSnap } } });
         },
         undo: () => {
-          get().project = {
-            ...get().project,
-            fixtures: { ...get().project.fixtures, [fixtureId]: beforeSnap },
-          };
+          const p = get().project;
+          set({ project: { ...p, fixtures: { ...p.fixtures, [fixtureId]: beforeSnap } } });
         },
       });
     },
@@ -379,8 +378,8 @@ export const useProjectStore = create<ProjectState>()(
       const afterSnap = structuredClone(movedProject);
       pushCommand({
         label: '移动灯具',
-        execute: () => { get().project = afterSnap; },
-        undo: () => { get().project = beforeSnap; },
+        execute: () => { set({ project: afterSnap }); },
+        undo: () => { set({ project: beforeSnap }); },
       });
       return { autoUnbound };
     },
@@ -404,8 +403,8 @@ export const useProjectStore = create<ProjectState>()(
       const afterSnap = structuredClone(afterProject);
       pushCommand({
         label: '移动并锁定灯具',
-        execute: () => { get().project = afterSnap; },
-        undo: () => { get().project = beforeSnap; },
+        execute: () => { set({ project: afterSnap }); },
+        undo: () => { set({ project: beforeSnap }); },
       });
       return { autoUnbound };
     },
