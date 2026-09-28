@@ -87,6 +87,8 @@ P8 六阶段全部完成，测试 310 → 435 条。时间轴经用户验收改�
 | P26b Phase 0 止血 · 入夜画面（曝光 1.0→1.6 + 夜间 ambient/hemi 兜底） | ✅ 已提交（`590c1b3`，画面判定权在用户） | `docs/p26b-phase0-night-frames-spec.md`（2026-09-28） |
 | P27 Phase 1 · 命令栈基础设施（CommandStack + Ctrl+Z/Y + UndoRedoBar） | ✅ 已提交（`159a5d4` + `54cefb1` 规格） | `docs/p27-phase1-commandstack-spec.md`（2026-09-28） |
 | P28 Phase 1 · 灯具库 + 拖放 + TransformControls | ✅ 已提交（`a2c664b`） | `docs/p28-phase1-fixture-drag-spec.md`（2026-09-28） |
+| P29 灯具可见性修复（法线判定反转 + 视觉放大 + 拖放修复） | ✅ 已提交（`97e2150` + `1ae3d31` + `dfdbc0a`） | `docs/p29-fixture-visibility-spec.md`（2026-09-28） |
+| P30 灯具类型独立几何模型（8 类各有造型） | ✅ 已提交（`69cd721`） | `docs/p30-fixture-models-spec.md`（2026-09-28） |
 
 ### Phase 0 止血（源自 `Lumina项目审查与后续工作方案.md` §二）
 
