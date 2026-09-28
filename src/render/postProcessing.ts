@@ -2,7 +2,7 @@
  * 后处理管线（WebGL2 专属，P7）
  *
  * 封装 Three.js EffectComposer，构建标准管线：
- *   RenderPass → GodraysPass（体积光）→ UnrealBloomPass（光晕）→ OutputPass（色调映射）
+ *   RenderPass → GodraysPass（体积光）→ UnrealBloomPass（光晕）→ OutputPass（色调映射）→ GradePass（调色）
  *
  * GodraysPass 需要场景深度纹理：
  *   render() 时先渲染场景到带 DepthTexture 的 RT，将深度纹理传递给 GodraysPass，
@@ -33,6 +33,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { DEFAULT_GODRAYS, GodraysPass } from './godrays.js';
 import type { GodraysSettings } from './godrays.js';
+import { GradePass } from './gradePass.js';
+import type { GradeParams } from './gradePass.js';
 
 /** Bloom 配置参数 */
 export interface BloomConfig {
@@ -80,6 +82,7 @@ export class PostProcessing {
   private bloomPass: UnrealBloomPass;
   private outputPass: OutputPass;
   private godraysPass: GodraysPass;
+  private gradePass: GradePass;
   private godraysRT: WebGLRenderTarget | null;
   private _godraysSettings: GodraysSettings;
   private _renderer: WebGLRenderer;
@@ -119,11 +122,16 @@ export class PostProcessing {
 
     this.outputPass = new OutputPass();
 
-    // 管线顺序：RenderPass → Godrays → Bloom → Output
+    // P35：调色 Pass（6 参数）。放在 OutputPass 之后——
+    // OutputPass 做色调映射与色彩空间转换，GradePass 再在其上叠温度/对比/饱和度/暗角。
+    this.gradePass = new GradePass();
+
+    // 管线顺序：RenderPass → Godrays → Bloom → Output → Grade
     this.composer.addPass(this.renderPass);
     this.composer.addPass(this.godraysPass);
     this.composer.addPass(this.bloomPass);
     this.composer.addPass(this.outputPass);
+    this.composer.addPass(this.gradePass);
 
     this.godraysRT = null;
   }
@@ -224,6 +232,21 @@ export class PostProcessing {
   /** 获取 Godrays 参数快照 */
   getGodrays(): GodraysSettings {
     return { ...this._godraysSettings };
+  }
+
+  /** P35：获取调色 Pass 实例（供 sceneEngine 在 setGrade 里透传参数） */
+  getGradePass(): GradePass {
+    return this.gradePass;
+  }
+
+  /** P35：设置调色参数（透传到 GradePass） */
+  setGrade(partial: Partial<GradeParams>): void {
+    this.gradePass.setParams(partial);
+  }
+
+  /** P35：读取当前调色参数快照 */
+  getGrade(): GradeParams {
+    return { ...this.gradePass.params };
   }
 
   /** 创建（或重建）Godrays 深度 RT。

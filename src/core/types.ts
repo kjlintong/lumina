@@ -243,6 +243,16 @@ export interface LuminaProject {
   model?: ModelGeometry;
 }
 
+/** P35：调色参数类型（与 gradePass.ts 的 GradeParams 结构一致，保持类型兼容） */
+export interface GradeParams {
+  temperature: number;
+  contrast: number;
+  saturation: number;
+  vignetteStrength: number;
+  whiteBalanceShift: number;
+  luminanceGamma: number;
+}
+
 /**
  * 场景定义：只持有亮度与色温表，**不动位置与形状**（§6 P5）。
  * 保留抽象以满足 M3，但 M3 不在本轮范围。
@@ -264,4 +274,10 @@ export interface SceneDefinition {
    * 二者不冲突。
    */
   exposure?: number;
+  /**
+   * P35：调色参数（GradePass 6 参数）。**可选**：未定义时保持当前 GradePass 状态不变。
+   * 语义：跨场景预设切换时与 levels/cct 一起做 easeInOut 插值（走 sceneController.tick）。
+   * 归属：系统级参数，不属于任何 Fixture（Fixture 是供给侧实体，与画面后期无关）。
+   */
+  grade?: GradeParams;
 }

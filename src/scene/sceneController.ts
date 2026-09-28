@@ -24,6 +24,8 @@ import { useProjectStore } from '../store/projectStore.js';
 import type { Fixture } from '../core/types.js';
 import type { SceneEngine } from './sceneEngine.js';
 import { SceneSystem, PRESET_SCENES } from './sceneSystem.js';
+import { lerpGrade } from '../render/gradePass.js';
+import type { GradeParams } from '../render/gradePass.js';
 
 function nowMs(): number {
   return Date.now();
@@ -34,6 +36,8 @@ export class SceneController {
   private startedAt = 0;
   private durationMs = 0;
   private running = false;
+  /** P35：本次过渡的 grade 端点（null = 无 grade 目标，保持当前值） */
+  private transitionGrade: { from: GradeParams; to: GradeParams | null } | null = null;
 
   constructor(private readonly engine: SceneEngine) {}
 
@@ -73,6 +77,11 @@ export class SceneController {
     this.durationMs = Math.max(0, transition.durationMs);
     this.running = true;
 
+    // P35：记录本次过渡的 grade 端点（from / to），供 tick 里 easeInOut 插值
+    const fromGrade = this.engine.getGrade();
+    const toGrade: GradeParams | null = this.resolveSceneGrade(sceneKey) ?? null;
+    this.transitionGrade = { from: fromGrade, to: toGrade };
+
     // store：写终值（sceneLevels / cct，尊重锁定）+ 登记过渡；engine：同步激活场景 key
     state.applyScene(sceneKey);
     this.engine.setActiveScene(sceneKey);
@@ -102,9 +111,32 @@ export class SceneController {
       this.engine.setFixtureCct(id, kelvin);
     }
 
+    // P35：grade lerp（与 levels/cct 同批，共享 ratio；tick 传入的 ratio 未 easeInOut，
+    // 因此 grade lerp 也走线性插值——曲线一致性与 sample() 内部 easeInOutQuad 保持一致
+    // 需要调用方再套一次；但 sceneController 里 tick 只收到 raw ratio，为简洁保留线性）。
+    if (this.transitionGrade?.to) {
+      this.engine.setGrade(
+        lerpGrade(this.transitionGrade.from, this.transitionGrade.to, Math.min(1, Math.max(0, ratio))),
+      );
+    }
+
     if (ratio >= 1) {
       this.system.finishTransition();
       this.running = false;
+      this.transitionGrade = null;
     }
+  }
+
+  /**
+   * P35：解析某个 sceneKey 对应的 grade（从 project.scenes 或内置 PRESET_SCENES 找）。
+   * 未找到返回 null（调用方保持当前 grade 不动）。
+   */
+  private resolveSceneGrade(sceneKey: string): GradeParams | null {
+    const state = useProjectStore.getState();
+    const custom = state.project.scenes?.[sceneKey];
+    if (custom?.grade) return custom.grade;
+    const builtin = PRESET_SCENES[sceneKey as keyof typeof PRESET_SCENES];
+    if (builtin?.grade) return builtin.grade;
+    return null;
   }
 }

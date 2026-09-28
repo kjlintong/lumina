@@ -18,6 +18,7 @@
  */
 
 import type { CCTValue, Fixture, SceneDefinition } from './types.js';
+import { PRESET_GRADE } from '../render/gradePass.js';
 
 export type PresetId = 'reception' | 'cinema' | 'reading';
 
@@ -142,5 +143,8 @@ export function presetToSceneDefinition(
     transitionMs,
     levels,
     cct,
+    // P35：调色参数随预设写入 SceneDefinition，走 sceneController.tick 的 lerp 通道。
+    // PRESET_GRADE 只含 3 个 preset key，PresetId 是它的子集，业务上 key 一定命中。
+    grade: PRESET_GRADE[preset],
   };
 }

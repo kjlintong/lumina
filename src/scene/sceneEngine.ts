@@ -64,6 +64,14 @@ import { buildPlanter, buildPlant } from '../render/plants.js';
 import { AutoExposure } from '../render/autoExposure.js';
 import { bloomForSunIntensity } from '../render/postProcessing.js';
 import { presetExposureBySceneKey } from '../render/sceneExposure.js';
+import {
+  DEFAULT_GRADE,
+} from '../render/gradePass.js';
+import type { GradeParams } from '../render/gradePass.js';
+import { loadHdri, pickHdriBySunElevation } from '../render/hdriLoader.js';
+import type { HDRIKey } from '../render/hdriLoader.js';
+import { loadFurniture } from '../render/furnitureAssets.js';
+import type { FurnitureKey } from '../render/furnitureAssets.js';
 import { solarColor, solarPosition } from './solar.js';
 import { cameraPresetByKey, easeInOutQuad, lerp } from './cameraPresets.js';
 
@@ -138,6 +146,36 @@ interface FixtureLightEntry {
 /** 亮度截断到 [0, 1] */
 function clamp01(v: number): number {
   return Math.min(1, Math.max(0, v));
+}
+
+/**
+ * P35：ActivityZone.type → FurnitureKey 映射。
+ * 返回 null 时保留 procedural fallback（bed/sofa/table/cabinet 之外的类型
+ * 无 GLTF 资产，走程序化方块）。
+ */
+function mapFurnitureKey(zoneType: string): FurnitureKey | null {
+  switch (zoneType) {
+    case 'lounge': return 'sofa';
+    case 'sleep': return 'bed';
+    case 'dining': return 'table';
+    case 'wardrobe': return 'cabinet';
+    case 'work': return 'chair';
+    case 'reading': return 'chair';
+    default: return null;
+  }
+}
+
+/** P35：递归 dispose 一个 Group 内的所有 geometry/material（含 Group 本身） */
+function disposeGroupFallback(g: Group): void {
+  g.traverse((o) => {
+    const m = o as unknown as {
+      geometry?: { dispose(): void } | null;
+      material?: { dispose(): void } | { dispose(): void }[] | null;
+    };
+    m.geometry?.dispose?.();
+    if (Array.isArray(m.material)) m.material.forEach((x) => x.dispose?.());
+    else m.material?.dispose?.();
+  });
 }
 
 /**
@@ -338,10 +376,27 @@ export class SceneEngine {
   private decorPlants: Group | null = null;
 
   /**
+   * P35：上次加载的 HDRI key。updateSunPosition 里按太阳高度角切档，
+   * 只有 key 变化才重新加载（避免每帧重复网络请求）。
+   * null = 尚未加载过（保持 initEnvironment 里的 RoomEnvironment IBL 兜底）。
+   */
+  private lastHdriKey: HDRIKey | null = null;
+
+  /**
    * 每帧回调（渲染循环内、render 之前调用）。App 用它把 sceneController.tick
    * 挂进引擎循环，驱动场景过渡动画，避免再起一个 rAF。
    */
   private frameCallback: ((timeMs: number) => void) | null = null;
+
+  /**
+   * P35：GLTF 家具异步加载状态。
+   *
+   * 同步 fallback 走 buildFurniture（procedural，与 P8d 行为一致），
+   * 然后异步加载 GLTF，成功时替换 group 内 procedural 部分。
+   * 用 token（递增 attempt）让连续 addZone 时旧的 async 自动作废。
+   */
+  private zoneAssets = new Map<string, { fallback: Group | null; attempt: number }>();
+  private zoneAttemptCounter = 0;
 
   constructor(backend: RenderBackend, config: SceneEngineConfig = {}) {
     this.backend = backend;
@@ -987,13 +1042,68 @@ export class SceneEngine {
     const group = new Group();
     group.name = `zone:${zone.key}`;
     group.add(buildActivityZone(zone, selected));
-    group.add(buildFurniture(zone));
+    // P35：GLTF 家具优先；同步 fallback 到程序化 buildFurniture（视觉无退化）
+    this.appendFurnitureToZone(zone, group);
     this.scene.add(group);
     this.zoneObjects.set(zone.key, group);
   }
 
+  /**
+   * P35：把家具装入 zone group。
+   * 同步先用 procedural fallback，然后异步加载 GLTF，成功时替换。
+   * fallback 保证：无论 GLTF 是否加载成功，用户都**立刻**看到家具。
+   */
+  private appendFurnitureToZone(zone: ActivityZone, group: Group): void {
+    const fallback = buildFurniture(zone);
+    group.add(fallback);
+    const assetKey = mapFurnitureKey(zone.type);
+    if (assetKey) {
+      const attempt = ++this.zoneAttemptCounter;
+      this.zoneAssets.set(zone.key, { fallback, attempt });
+      void this.replaceZoneFurniture(zone, group, fallback, assetKey, attempt);
+    }
+  }
+
+  /**
+   * P35：异步加载 GLTF 家具；成功则替换 procedural fallback。
+   * 降级：加载失败时保留 fallback，不抛异常、不阻塞主流程。
+   * Token 保护：若尝试期间 zone 被替换/删除（attempt 不匹配），直接返回。
+   */
+  private async replaceZoneFurniture(
+    zone: ActivityZone,
+    group: Group,
+    fallback: Group,
+    assetKey: FurnitureKey,
+    attempt: number,
+  ): Promise<void> {
+    if (this.zoneObjects.get(zone.key) !== group) return;
+    const renderer = this.backend.type === 'webgl2' ? this.backend.getRenderer() : null;
+    if (!renderer) return;
+    try {
+      const asset = await loadFurniture(assetKey, renderer);
+      // 期间 group 可能被 remove/add 或 zone 被删除：token 不匹配时静默丢弃
+      const cur = this.zoneAssets.get(zone.key);
+      if (!cur || cur.attempt !== attempt) return;
+      if (this.zoneObjects.get(zone.key) !== group) return;
+      if (asset) {
+        // 替换：移除 fallback，加入 GLTF（沿用 zone.pos / rotY 位置）
+        const savedPos = fallback.position.clone();
+        const savedRotY = fallback.rotation.y;
+        group.remove(fallback);
+        disposeGroupFallback(fallback);
+        asset.position.copy(savedPos);
+        asset.rotation.y = savedRotY;
+        group.add(asset);
+        this.zoneAssets.set(zone.key, { fallback: null, attempt });
+      }
+    } catch {
+      // loadFurniture 内部已 try/catch，此处再兜一次极端异常
+    }
+  }
+
   /** 移除活动区（可视化与家具一并移除） */
   removeZone(zoneKey: string): void {
+    this.zoneAssets.delete(zoneKey);
     const group = this.zoneObjects.get(zoneKey);
     if (group) {
       this.scene.remove(group);
@@ -1100,6 +1210,23 @@ export class SceneEngine {
   /** 同步当前激活场景 key（影响 addFixture / updateFixture 的亮度恢复） */
   setActiveScene(sceneKey: string | null): void {
     this.activeSceneKey = sceneKey;
+  }
+
+  /**
+   * P35：设置调色参数（GradePass 6 参数）。
+   * 透传到 backend.setGrade（内部经 postProcessing.setGrade → gradePass.setParams）。
+   * backend 未实现（mock / 无后处理）时静默 no-op。
+   */
+  setGrade(params: Partial<GradeParams>): void {
+    this.backend.setGrade?.(params);
+  }
+
+  /**
+   * P35：读取当前调色参数快照。
+   * 无后处理（mock backend）时返回 DEFAULT_GRADE，避免返回 undefined。
+   */
+  getGrade(): GradeParams {
+    return this.backend.getGrade?.() ?? DEFAULT_GRADE;
   }
 
   /**
@@ -1309,6 +1436,31 @@ export class SceneEngine {
     // setBloom 是可选方法（部分 mock 后端无后处理），用 ?. 保底。
     const bloom = bloomForSunIntensity(this.sunLight.intensity);
     this.backend.setBloom?.(bloom.strength, bloom.radius, bloom.threshold);
+
+    // ---- P35：HDRI 按太阳高度角切换 ----
+    // 只在 key 变化时加载（loadHdri 内部有 cache，重复 key 直接命中）。
+    // 降级：文件缺失时 loadHdri 返回 null，静默保留 RoomEnvironment IBL。
+    void this.updateHdri(elevation);
+  }
+
+  /**
+   * P35：按太阳高度角切换 HDRI 环境贴图。
+   * 成功时替换 scene.environment；失败时保持现有（RoomEnvironment PMREM 兜底）。
+   */
+  private async updateHdri(elevation: number): Promise<void> {
+    if (this.backend.type !== 'webgl2') return;
+    const key = pickHdriBySunElevation(elevation);
+    if (key === this.lastHdriKey) return;
+    try {
+      const renderer = this.backend.getRenderer();
+      const tex = await loadHdri(key, renderer);
+      if (tex) {
+        this.scene.environment = tex;
+        this.lastHdriKey = key;
+      }
+    } catch {
+      // 网络失败 / WebGL 上下文丢失：静默降级
+    }
   }
 
   /** 设置时间 */

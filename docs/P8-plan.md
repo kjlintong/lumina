@@ -100,6 +100,7 @@ P8 六阶段全部完成，测试 310 → 435 条。时间轴经用户验收改�
 | P34c 场景预设映射（会客 / 观影 / 阅读，写 `project.scenes`，`qp-*` 前缀避免与内置 PRESET_SCENES 撞名） | ✅ 已提交（`e1932ed`，850 → 884） | `docs/p34-phase3-spec.md` §5（2026-09-28） |
 | P34d 照度伪彩预览（`luminanceGrid` CPU 采样 0.4m 步长 + Gamma 0.6 色标，复用 `fixtureContribution`） | ✅ 已提交（`159ed60`，850 → 862） | `docs/p34-phase3-spec.md` §6（2026-09-28） |
 | P34a Part A+B 收尾（`lightBudget.ts` + `layout.ts` + `lightBuilder` proxy + `sceneEngine.recalculateBudget/syncFixtures` + `LayoutPanel.tsx` + `projectStore.addFixtures`，含 eslint `--fix` 清理 4 个数组类型 lint error） | ✅ 已提交（见下，测试 850 → 907） | `docs/p34-phase3-spec.md` §3-§4（2026-09-28） |
+| P35 Phase 2 资产与调色（GradePass 6 参数后置 Pass + HDRLoader + GLTF/DRACO/KTX2 家具加载器 + RoomEnvironment/程序化家具降级回落 + sceneController grade easeInOut 插值 + preset grade 映射） | ✅ 已提交（`ab5d6d5`，907 → 930） | `docs/p35-execution-spec.md`（2026-09-28） |
 
 ### Phase 0 止血（源自 `Lumina项目审查与后续工作方案.md` §二）
 

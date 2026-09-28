@@ -14,6 +14,7 @@ import { averageLuminanceFromRGBA } from './luminance.js';
 import { PostProcessing } from './postProcessing.js';
 import type { BloomSettings } from './postProcessing.js';
 import type { GodraysSettings } from './godrays.js';
+import type { GradeParams } from './gradePass.js';
 
 /** 后端类型标识（P26a 后为字面量，保留联合类型以便接口签名兼容） */
 export type BackendType = 'webgl2';
@@ -117,6 +118,12 @@ export interface RenderBackend {
 
   /** 获取当前 Godrays 光源屏幕位置 */
   getGodraysLightPosition?(): { x: number; y: number } | undefined;
+
+  /** P35：设置调色参数（GradePass，6 参数） */
+  setGrade?(partial: Partial<GradeParams>): void;
+
+  /** P35：读取当前调色参数快照 */
+  getGrade?(): GradeParams | undefined;
 
   /** 释放后端资源 */
   dispose(): void;
@@ -261,6 +268,10 @@ export async function createBackend(options: BackendOptions): Promise<BackendRes
       postProcessing?.setGodraysLightPosition(x, y);
     },
     getGodraysLightPosition: () => postProcessing?.getGodraysLightPosition() ?? undefined,
+    setGrade: (partial) => {
+      postProcessing?.setGrade(partial);
+    },
+    getGrade: () => postProcessing?.getGrade() ?? undefined,
     dispose: () => {
       sampleRT.dispose();
       postProcessing?.dispose();
