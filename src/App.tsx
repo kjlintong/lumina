@@ -247,28 +247,29 @@ function handleDropFixture(
     }
     return false;
   };
+  let hitUsed: typeof hits[0] | undefined;
   for (const hit of hits) {
     if (isFixtureHit(hit.object)) continue;
-    const face = hit.face;
-    if (!face) continue;
-    const nx = face.normal.x;
-    const ny = face.normal.y;
-    const nz = face.normal.z;
-    const mount = mountFromNormal([nx, ny, nz]);
-    const point = hit.point;
-    const rawPos = dropPosFromHit([point.x, point.y, point.z], [nx, ny, nz]);
-    const snapped = snapFixturePos(rawPos);
-    const id = useProjectStore.getState().addFixture({
-      type: fixtureType as 'downlight' | 'spot' | 'pendant' | 'linear' | 'cove' | 'sconce' | 'floor' | 'table',
-      mount,
-      pos: snapped,
-    });
-    useProjectStore.getState().selectFixture(id);
-    useProjectStore.getState().setNotice(`已添加灯具（可 Ctrl+Z 撤销）`);
+    hitUsed = hit;
+    break;
+  }
+  if (!hitUsed || !hitUsed.face) {
+    useProjectStore.getState().setNotice('请拖到墙、天花或地面');
     return;
   }
-  // 未命中可放置的表面
-  useProjectStore.getState().setNotice('请拖到墙、天花或地面');
+  const face = hitUsed.face;
+  const normal: readonly [number, number, number] = [face.normal.x, face.normal.y, face.normal.z];
+  const point: readonly [number, number, number] = [hitUsed.point.x, hitUsed.point.y, hitUsed.point.z];
+  const mount = mountFromNormal(normal);
+  const rawPos = dropPosFromHit(point, normal);
+  const snapped = snapFixturePos(rawPos);
+  const id = useProjectStore.getState().addFixture({
+    type: fixtureType as 'downlight' | 'spot' | 'pendant' | 'linear' | 'cove' | 'sconce' | 'floor' | 'table',
+    mount,
+    pos: snapped,
+  });
+  useProjectStore.getState().selectFixture(id);
+  useProjectStore.getState().setNotice(`已添加灯具（可 Ctrl+Z 撤销）`);
 }
 
 // ---------------------------------------------------------------------------
