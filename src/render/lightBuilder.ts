@@ -33,8 +33,8 @@
  * 可视化替身，若让它投射阴影，会把自己的光照成一片黑斑。
  */
 
-import { Color, Mesh, Object3D, PointLight, RectAreaLight, SpotLight } from 'three';
-import type { DataTexture, Light } from 'three';
+import { Color, Object3D, PointLight, RectAreaLight, SpotLight } from 'three';
+import type { DataTexture, Light , Mesh} from 'three';
 import type { Fixture, Photometric } from '../core/types.js';
 import { computeBeamAngle } from './iesParser.js';
 import { createSpotlightPatternTexture } from './iesTexture.js';
@@ -208,7 +208,7 @@ function declaresIES(photometric: Photometric): boolean {
 export interface LightBuildResult {
   /** 场景图根节点：内含光源 + 灯罩 Mesh，整体加入场景即可 */
   object: Object3D;
-  /** 物理光源（本实现所有类型都能建模，故总有值） */
+  /** 物理光源（本实现所有类型都能建模，故总有值；proxy 模式为 undefined） */
   light?: Light;
   /**
    * 灯罩可视化 Mesh（P8b；P30 起由 fixtureModels 提供独立几何）。
@@ -221,6 +221,38 @@ export interface LightBuildResult {
   isIES: boolean;
   /** 配光是否为近似值（用于 UI 标注，工程红线 5） */
   approximated: boolean;
+  /** P34：本结果是否被降级为 proxy（只保留 shade，不建 Light） */
+  isProxy: boolean;
+  /** proxy 的降级原因（`reason` 值同 `computeLightBudget`） */
+  budgetReason?: 'shadow' | 'locked' | 'budget' | 'proxy';
+}
+
+/** buildLightFromFixture 的可选参数（P34 预算降级用） */
+export interface BuildLightOptions {
+  /** P34：降级为 proxy 时不建 Light 对象，只返回 shade */
+  proxy?: boolean;
+  /** proxy 原因（用于 UI 展示，非必需） */
+  budgetReason?: 'shadow' | 'locked' | 'budget' | 'proxy';
+}
+
+/**
+ * 只构建灯罩模型（proxy 分支复用）。
+ * 复用 buildFixtureModel（P30 的 8 分型入口），把 group + shade 组装到一个
+ * 新的 Object3D 根里；不建 Light。
+ */
+function buildShadeOnly(f: Fixture): { group: Object3D; shade: Mesh } {
+  const group = new Object3D();
+  group.name = f.id;
+  const [fx, fy, fz] = f.pos;
+  group.position.set(fx, fy, fz);
+  const { group: modelGroup, shade: shadeMesh } = buildFixtureModel(f);
+  modelGroup.position.set(0, 0, 0);
+  modelGroup.rotation.set(f.rot.pitch, f.rot.yaw, 0);
+  group.add(modelGroup);
+  shadeMesh.name = `${f.id}-shade`;
+  shadeMesh.castShadow = false;
+  shadeMesh.receiveShadow = false;
+  return { group, shade: shadeMesh };
 }
 
 // ---------------------------------------------------------------------------
@@ -245,12 +277,34 @@ export interface LightBuildResult {
  *
  * @param f Fixture 数据（pos 为世界坐标，唯一权威数据源）
  */
-export function buildLightFromFixture(f: Fixture): LightBuildResult {
+export function buildLightFromFixture(f: Fixture, opts: BuildLightOptions = {}): LightBuildResult {
   const [fx, fy, fz] = f.pos;
 
   const group = new Object3D();
   group.name = f.id;
   group.position.set(fx, fy, fz);
+
+  // --- P34：proxy 分支（预算降级；只保留 shade，不建 Light）----------------
+  // 位于 switch (f.type) 之前，尽早短路，避免计算色温 / IES / 光通量等
+  // 无用的中间量。shade 仍按 fixtureModels 的 8 分型几何构建，保证视觉不缺失。
+  if (opts.proxy) {
+    const { group: shadeGroup, shade: shadeMesh } = buildShadeOnly(f);
+    // 把 shadeGroup 的子内容并入当前 group（保持外部 API 单一 object 节点）
+    while (shadeGroup.children.length > 0) {
+      const child = shadeGroup.children[0];
+      if (child) group.add(child);
+    }
+    const result: LightBuildResult = {
+      object: group,
+      light: undefined as unknown as Light,
+      shade: shadeMesh,
+      isIES: false,
+      approximated: false,
+      isProxy: true,
+    };
+    if (opts.budgetReason !== undefined) result.budgetReason = opts.budgetReason;
+    return result;
+  }
 
   // --- 色温 → 颜色 --------------------------------------------------------
   // cct 可以是固定值或可调区间；区间取中点作为渲染色。
@@ -413,5 +467,5 @@ export function buildLightFromFixture(f: Fixture): LightBuildResult {
   shadeMesh.castShadow = false;
   shadeMesh.receiveShadow = false;
 
-  return { object: group, light, shade: shadeMesh, isIES, approximated };
+  return { object: group, light, shade: shadeMesh, isIES, approximated, isProxy: false };
 }

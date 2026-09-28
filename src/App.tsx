@@ -33,6 +33,7 @@ import { ScenePanel } from './ui/panels/ScenePanel.js';
 import { IlluminancePanel } from './ui/panels/IlluminancePanel.js';
 import { RenderPanel } from './ui/panels/RenderPanel.js';
 import { ModelPanel } from './ui/panels/ModelPanel.js';
+import { LayoutPanel } from './ui/panels/LayoutPanel.js';
 import { ModelPlan } from './ui/panels/ModelPlan.js';
 import { ModelCanvas } from './ui/panels/ModelCanvas.js';
 import { ImportPanel } from './ui/panels/ImportPanel.js';
@@ -705,6 +706,7 @@ export default function App() {
             <FloorPlan />
             <ImportPanel />
             <FixtureLibraryPanel />
+            <LayoutPanel />
             <ModelPanel />
             <ModelPlan />
             <ModelCanvas />

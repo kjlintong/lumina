@@ -49,6 +49,9 @@ import { buildActivityZone } from '../render/activityZone.js';
 import { buildDustParticles, updateDustPoints } from '../render/dustParticles.js';
 import { buildFurniture } from '../render/furniture.js';
 import { buildLightFromFixture, cctToRGB, SHADE_EMISSIVE_SCALE } from '../render/lightBuilder.js';
+import type { BuildLightOptions } from '../render/lightBuilder.js';
+import { computeLightBudget } from '../render/lightBudget.js';
+import type { LightBudgetResult } from '../render/lightBudget.js';
 import { axesForMount } from '../render/mountAxes.js';
 import { FIXTURE_GRID_M } from '../render/snapToGrid.js';
 import { buildRoom } from '../render/room.js';
@@ -111,7 +114,7 @@ const SUN_SHADOW_MAP_SIZE = 1024;
 interface FixtureLightEntry {
   /** 场景图根节点（光源 + 灯罩 Mesh） */
   object: Object3D;
-  /** 物理光源（buildLightFromFixture 总能构建，但类型上允许缺省） */
+  /** 物理光源（buildLightFromFixture 总能构建，但类型上允许缺省；proxy 模式为 undefined） */
   light: Light | undefined;
   /** 未调光时的原始强度（buildLightFromFixture 返回的 light.intensity） */
   baseIntensity: number;
@@ -122,6 +125,14 @@ interface FixtureLightEntry {
    * setFixtureCct / setFixtureLevel 就地同步，让灯具成为「可见的亮点」。
    */
   shade: Mesh | null;
+  /**
+   * P34：fixture 数据引用（供 recalculateBudget 遍历 + updateFixture 差异判定）。
+   * fixtureLights 是全场景灯具的权威登记表，把它作为「当前 fixtures」的唯一来源，
+   * 避免 sceneEngine 反向依赖 projectStore。
+   */
+  fixture: Fixture;
+  /** P34：本灯当前的预算原因（用于 UI 展示；proxy 时才有意义） */
+  budgetReason?: 'shadow' | 'locked' | 'budget' | 'proxy';
 }
 
 /** 亮度截断到 [0, 1] */
@@ -187,6 +198,9 @@ export class SceneEngine {
   private timeSpeed: number;
 
   private fixtureLights = new Map<string, FixtureLightEntry>();
+
+  /** P34：当前实时光源预算结果（null = 尚未初始化） */
+  private lightBudget: LightBudgetResult | null = null;
 
   /**
    * 活动区可视化 + 家具在场景图中的登记（zone.key -> wrapper Group）。
@@ -820,22 +834,55 @@ export class SceneEngine {
 
   /** 添加灯具到场景；已存在时等价 updateFixture（重建） */
   addFixture(fixture: Fixture): void {
+    this.addFixtureInternal(fixture);
+    this.recalculateBudget();
+  }
+
+  /**
+   * 内部实现：把 fixture 加到 fixtureLights / scene，不含预算重算。
+   * P34 起被 addFixture（外部 wrapper）与 syncFixtures（批量同步）共用。
+   */
+  private addFixtureInternal(fixture: Fixture): void {
     if (this.fixtureLights.has(fixture.id)) {
       this.updateFixture(fixture);
       return;
     }
-    const { object, light, approximated, shade } = buildLightFromFixture(fixture);
+    const opts: BuildLightOptions = this.buildOptsForFixture(fixture);
+    const { object, light, approximated, shade, budgetReason } = buildLightFromFixture(fixture, opts);
     this.scene.add(object);
     const baseIntensity = light ? light.intensity : 0;
-    this.fixtureLights.set(fixture.id, { object, light, baseIntensity, approximated, shade });
+    const entry: FixtureLightEntry = { object, light, baseIntensity, approximated, shade, fixture };
+    if (budgetReason !== undefined) entry.budgetReason = budgetReason;
+    this.fixtureLights.set(fixture.id, entry);
     // 应用当前亮度级别：优先该灯在当前场景下的 sceneLevels，默认全亮
     const level = this.resolveLevel(fixture);
     this.fixtureLevels.set(fixture.id, level);
     this.applyFixtureIntensity(fixture.id, level);
   }
 
+  /** 根据预算决定 buildLightFromFixture 的 opts */
+  private buildOptsForFixture(fixture: Fixture): BuildLightOptions {
+    if (!this.lightBudget) return {};
+    const entry = this.lightBudget.entries.find((e) => e.id === fixture.id);
+    if (!entry) return {};
+    if (entry.isReal) {
+      const opts: BuildLightOptions = {};
+      if (entry.reason === 'locked') opts.budgetReason = 'locked';
+      return opts;
+    }
+    const opts: BuildLightOptions = { proxy: true };
+    if (entry.reason === 'proxy') opts.budgetReason = 'proxy';
+    return opts;
+  }
+
   /** 移除灯具 */
   removeFixture(fixtureId: string): void {
+    this.removeFixtureInternal(fixtureId);
+    this.recalculateBudget();
+  }
+
+  /** 内部实现：只移除 fixtureLights / scene，不含预算重算 */
+  private removeFixtureInternal(fixtureId: string): void {
     // 若被删除的灯具仍挂在 TransformControls 上，先 detach（否则 gizmo 会指到已删除的 object）
     if (this.attachedFixtureId === fixtureId) {
       this.transformControls?.detach();
@@ -847,6 +894,84 @@ export class SceneEngine {
       this.fixtureLights.delete(fixtureId);
       this.fixtureLevels.delete(fixtureId);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // P34：实时光源预算（≤ MAX_REAL_LIGHTS）
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 重算预算并做差异同步。
+   *
+   * 差异分类：
+   *   - existing && 变为 real（原 proxy）→ 重建（真光源）
+   *   - existing && 变为 proxy（原 real）→ 重建（只保留 shade）
+   *   - 无变化 → 不动
+   *
+   * 只遍历 fixtureLights 中的条目（避免 sceneEngine 反向依赖 store）；
+   * fixtureLights 是全场景灯具的权威登记表。
+   * 先摘出差异列表、再处理，避免 Map 迭代过程中被修改导致迭代器失效。
+   */
+  private recalculateBudget(): void {
+    const fixtures: Fixture[] = [];
+    for (const entry of this.fixtureLights.values()) {
+      fixtures.push(entry.fixture);
+    }
+    const newBudget = computeLightBudget(fixtures);
+    const oldBudget = this.lightBudget;
+
+    // 提前置入 newBudget，让 addFixtureInternal 的 buildOptsForFixture 读到正确值
+    this.lightBudget = newBudget;
+
+    // 摘出所有需要重建的 (id, fixture) 对，一次性从 scene/map 里拆除后再重建
+    const toRebuild: { id: string; fixture: Fixture }[] = [];
+    for (const [id, entry] of this.fixtureLights) {
+      const wasReal = oldBudget ? oldBudget.realSet.has(id) : true;
+      const isReal = newBudget.realSet.has(id);
+      if (wasReal === isReal) continue;
+      toRebuild.push({ id, fixture: entry.fixture });
+    }
+    for (const { id, fixture } of toRebuild) {
+      const entry = this.fixtureLights.get(id);
+      if (!entry) continue;
+      this.scene.remove(entry.object);
+      this.fixtureLights.delete(id);
+      // addFixtureInternal 内部走 buildOptsForFixture（读 this.lightBudget=newBudget）
+      this.addFixtureInternal(fixture);
+      const level = this.fixtureLevels.get(id) ?? 1;
+      this.applyFixtureIntensity(id, level);
+    }
+  }
+
+  /**
+   * P34：一次性同步一批 fixtures 的差异，只重算一次预算。
+   *
+   * 与 addFixture/removeFixture 逐盏触发的区别：批量写入时只触发一次
+   * recalculateBudget，避免 O(n²) 重建。调用方应传入**完整**的
+   * fixtures 字典（含已存在的 + 新增的，不含已删除的）。
+   */
+  syncFixtures(allFixtures: Record<string, Fixture>): void {
+    const before = new Set([...this.fixtureLights.keys()]);
+    const after = new Set(Object.keys(allFixtures));
+
+    // 先删除（不在 after 里的）
+    for (const id of before) {
+      if (!after.has(id)) this.removeFixtureInternal(id);
+    }
+    // 再新增（不在 before 里的）
+    for (const id of after) {
+      if (!before.has(id)) {
+        const f = allFixtures[id];
+        if (f) this.addFixtureInternal(f);
+      }
+    }
+    // 已存在的（before ∩ after）不重建；预算变更会在此处一次性处理
+    this.recalculateBudget();
+  }
+
+  /** 当前预算结果（App 层读取用于 HUD 提示） */
+  getLightBudget(): LightBudgetResult | null {
+    return this.lightBudget;
   }
 
   // ---------------------------------------------------------------------------
@@ -905,10 +1030,13 @@ export class SceneEngine {
       return;
     }
     this.scene.remove(existing.object);
-    const { object, light, approximated, shade } = buildLightFromFixture(fixture);
+    const opts: BuildLightOptions = this.buildOptsForFixture(fixture);
+    const { object, light, approximated, shade, budgetReason } = buildLightFromFixture(fixture, opts);
     this.scene.add(object);
     const baseIntensity = light ? light.intensity : 0;
-    this.fixtureLights.set(fixture.id, { object, light, baseIntensity, approximated, shade });
+    const entry: FixtureLightEntry = { object, light, baseIntensity, approximated, shade, fixture };
+    if (budgetReason !== undefined) entry.budgetReason = budgetReason;
+    this.fixtureLights.set(fixture.id, entry);
     // resolveLevel 优先读 sceneLevels[activeSceneKey]，否则保留重建前的 level
     const level = this.resolveLevel(fixture);
     this.fixtureLevels.set(fixture.id, level);
@@ -1352,22 +1480,22 @@ export class SceneEngine {
    * 诊断：返回 scene 里所有 fixture group 的信息（P29b 排错用）。
    * 用于查看新拖入的灯具实际位置、group 名、以及是否被 TransformControls 挂接。
    */
-  getFixtureDiagnostics(): Array<{
+  getFixtureDiagnostics(): {
     id: string;
     pos: [number, number, number];
     isAttached: boolean;
     hasShade: boolean;
     shadeVisible: boolean;
     shadeChildren: number;
-  }> {
-    const result: Array<{
+  }[] {
+    const result: {
       id: string;
       pos: [number, number, number];
       isAttached: boolean;
       hasShade: boolean;
       shadeVisible: boolean;
       shadeChildren: number;
-    }> = [];
+    }[] = [];
     for (const [id, entry] of this.fixtureLights) {
       const obj = entry.object;
       result.push({

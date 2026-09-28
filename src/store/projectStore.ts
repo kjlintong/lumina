@@ -95,6 +95,8 @@ export interface ProjectState {
 
   // -- 灯具（供给侧） --------------------------------------------------------
   addFixture: (opts: FixtureOptions) => string;
+  /** P34 · Part B：一次性加入多盏灯（批量布灯），整批一条 Command，撤销一次性删所有 */
+  addFixtures: (fixtures: Fixture[]) => void;
   removeFixture: (fixtureId: string) => void;
   /**
    * 用户手动修改灯具字段。**手动改 = 锁定**（ADR-17）：被改的字段路径
@@ -314,6 +316,42 @@ export const useProjectStore = create<ProjectState>()(
         },
       });
       return fixture.id;
+    },
+
+    /**
+     * P34 · Part B：一次性加入多盏灯。
+     *
+     * 与 addFixture 的差别：
+     * - 整批一条 Command（P34 §2.2），撤销时一次性删所有新加的 fixture；
+     * - 不逐盏触发 engine.addFixture 的订阅回调，App 层由 engine.syncFixtures
+     *   一次性 diff 处理，避免 O(n²) 预算重算。
+     *
+     * ADR-01 反向："不拆分"——批量撤销 = 整批撤销。
+     */
+    addFixtures: (fixtures) => {
+      if (fixtures.length === 0) return;
+      const snapshots = fixtures.map((f) => structuredClone(f));
+      const label = `批量布灯 ${snapshots.length} 盏`;
+      pushCommand({
+        label,
+        execute: () => {
+          const p = get().project;
+          const next = { ...p, fixtures: { ...p.fixtures } };
+          for (const f of snapshots) next.fixtures[f.id] = f;
+          set({ project: next });
+        },
+        undo: () => {
+          const p = get().project;
+          const next = { ...p, fixtures: { ...p.fixtures } };
+          for (const f of snapshots) delete next.fixtures[f.id];
+          set({
+            project: next,
+            selectedFixtureId: snapshots.length > 0 && snapshots[0]?.id === get().selectedFixtureId
+              ? null
+              : get().selectedFixtureId,
+          });
+        },
+      });
     },
 
     removeFixture: (fixtureId) => {
