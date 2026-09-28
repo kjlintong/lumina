@@ -14,10 +14,15 @@ export type DropMount = 'ceiling' | 'recessed' | 'wall' | 'floor' | 'tabletop' |
 
 export function mountFromNormal(normal: readonly [number, number, number]): DropMount {
   const ny = normal[1];
-  if (ny > 0.7) return 'ceiling';        // 面向上（吸顶）
-  if (ny < -0.7) return 'recessed';      // 面向下（筒灯：灯安装在天花内，光朝下）
-  if (Math.abs(ny) < 0.7) return 'wall'; // 侧面朝房间
-  return 'suspended';                    // 兜底
+  // P29 修正：PlaneGeometry 默认法线朝 +Y，但 room.ts 里天花经
+  // `ceiling.rotation.x = Math.PI / 2` 翻转后，world normal 指向下方 (-Y)。
+  // 因此从房间内部点天花，raycaster 命中的 world normal 是 (0, -1, 0)。
+  // 旧逻辑把 ny < -0.7 判定为 recessed（嵌入天花），导致灯具被塞到天花内部，
+  // 从下方看不见。改为：ny < -0.7 判定为 ceiling（贴天花下表面）。
+  if (ny < -0.7) return 'ceiling';
+  if (ny > 0.7) return 'recessed';   // 从上方点地板（罕用）
+  if (Math.abs(ny) < 0.7) return 'wall';
+  return 'suspended';
 }
 
 /**

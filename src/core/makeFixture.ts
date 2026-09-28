@@ -39,13 +39,14 @@ export interface FixtureOptions {
 }
 
 const FORM_DEFAULTS: Record<ShadeForm, { diameter: number; height: number; aperture: number }> = {
-  cone: { diameter: 0.12, height: 0.2, aperture: 0.1 },
-  cylinder: { diameter: 0.15, height: 0.3, aperture: 0.15 },
-  sphere: { diameter: 0.25, height: 0.25, aperture: 0.25 },
-  disc: { diameter: 0.18, height: 0.04, aperture: 0.16 },
-  line: { diameter: 0.04, height: 1.2, aperture: 0.04 },
-  plane: { diameter: 0.6, height: 0.02, aperture: 0.58 },
-  custom: { diameter: 0.2, height: 0.2, aperture: 0.2 },
+  // P29：适度提升（真实数据），与 SHADE_VISUAL_SCALE=6.0 配合让默认工程 3 盏灯更醒目
+  cone: { diameter: 0.14, height: 0.22, aperture: 0.11 },
+  cylinder: { diameter: 0.18, height: 0.35, aperture: 0.17 },
+  sphere: { diameter: 0.28, height: 0.28, aperture: 0.28 },
+  disc: { diameter: 0.22, height: 0.05, aperture: 0.20 },
+  line: { diameter: 0.05, height: 1.4, aperture: 0.05 },
+  plane: { diameter: 0.7, height: 0.03, aperture: 0.68 },
+  custom: { diameter: 0.22, height: 0.22, aperture: 0.22 },
 };
 
 const TYPE_DEFAULTS: Record<FixtureType, { form: ShadeForm; mount: MountType; lumens: number; beamAngle: number }> =

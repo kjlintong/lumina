@@ -192,18 +192,27 @@ function declaresIES(photometric: Photometric): boolean {
 // 灯罩可视化
 // ---------------------------------------------------------------------------
 
-/** 灯罩可视化放缩因子（P11 视觉修复）。
- * 真实直径 0.15-0.25m 在 3-4m 相机距离下投影仅 15-25px，几乎不可见。
- * 这里放大 2.5×（体积等效 ×15.6）让灯罩在默认视角内清晰可辨，
- * 不影响物理光照数据（`Fixture.shape.diameter` 保持不变，
- * `photometric` 与 `intensity` 都不动，仅可视化替身放大）。
+/** 灯罩可视化放缩因子（P11 视觉修复 → P29 再次放大）。
+ * P11：真实直径 0.15-0.25m 在 3-4m 相机距离下投影仅 15-25px，几乎不可见。
+ *     初值 2.5×（体积等效 ×15.6）
+ * P29：默认工程与拖放创建的灯具实际渲染仍偏小（用户反馈"像骗人，看不见"）。
+ *     提升到 6.0×（体积等效 ×216）：
+ *     - disc (d=0.22m) → 视觉 1.32m：3-4m 相机距离投影 120-160px
+ *     - cone/cylinder (d=0.18m) → 视觉 1.08m：可见的圆锥/圆柱
+ *     - sphere (d=0.28m) → 视觉 1.68m：吊灯显眼
+ *     - line (h=1.4m) → 视觉 8.4m：linear 灯是长条
+ *     - plane (d=0.7m) → 视觉 4.2m：灯带在天花边沿清晰可见
+ *
+ * 只影响灯罩 Mesh 的几何尺寸；**不影响** Fixture.shape.diameter 字段
+ * （`photometric` 与 `intensity` 都用真实数据），也不影响 light 的 position。
  */
-export const SHADE_VISUAL_SCALE = 2.5;
+export const SHADE_VISUAL_SCALE = 6.0;
 
 /** 按 shape.form 选择灯罩几何：球/盘类用贴合造型，圆柱/圆筒/锥筒兜底成 CylinderGeometry。 */
 function shadeGeometry(form: ShadeForm, diameter: number, height: number): SphereGeometry | CircleGeometry | CylinderGeometry {
-  const radius = Math.max(0.005, diameter / 2) * SHADE_VISUAL_SCALE;
-  const h = Math.max(0.02, height) * SHADE_VISUAL_SCALE;
+  // P29：半径与高度都有下限，即使 shape.diameter=0 也不会退化
+  const radius = Math.max(0.02, diameter / 2) * SHADE_VISUAL_SCALE;
+  const h = Math.max(0.05, height) * SHADE_VISUAL_SCALE;
   switch (form) {
     case 'sphere':
       return new SphereGeometry(radius, 16, 12);
@@ -216,7 +225,6 @@ function shadeGeometry(form: ShadeForm, diameter: number, height: number): Spher
     case 'cone':
       return new CylinderGeometry(0.01, radius, h, 12);
     case 'custom':
-      // 兜底成略胖的球，比 default 大以增强可见性
       return new SphereGeometry(radius, 16, 12);
     default:
       return new SphereGeometry(radius, 12, 8);

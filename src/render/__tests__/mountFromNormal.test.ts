@@ -2,12 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { mountFromNormal, dropPosFromHit } from '../mountFromNormal.js';
 
 describe('mountFromNormal', () => {
-  it('法线向上 (0,1,0) → ceiling', () => {
-    expect(mountFromNormal([0, 1, 0])).toBe('ceiling');
+  it('法线向下 (0,-1,0)（从下方点天花，PlaneGeometry 翻转后 world normal = -Y）→ ceiling', () => {
+    expect(mountFromNormal([0, -1, 0])).toBe('ceiling');
   });
 
-  it('法线向下 (0,-1,0) → recessed', () => {
-    expect(mountFromNormal([0, -1, 0])).toBe('recessed');
+  it('法线向上 (0,1,0)（从上方点地板，罕用）→ recessed', () => {
+    expect(mountFromNormal([0, 1, 0])).toBe('recessed');
   });
 
   it('法线朝房间 (0,0,1) → wall', () => {
@@ -29,8 +29,8 @@ describe('mountFromNormal', () => {
     expect(mountFromNormal([0, 0.7, 0])).toBe('suspended');
   });
 
-  it('ny = -0.8（严格 < -0.7）→ recessed', () => {
-    expect(mountFromNormal([0, -0.8, 0])).toBe('recessed');
+  it('ny = -0.8（严格 < -0.7，从下方点天花）→ ceiling', () => {
+    expect(mountFromNormal([0, -0.8, 0])).toBe('ceiling');
   });
 });
 

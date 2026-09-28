@@ -931,9 +931,9 @@ export class SceneEngine {
     const shadeMat = entry.shade?.material as MeshStandardMaterial | undefined;
     if (!shadeMat) return;
     if (fixtureId === this.attachedFixtureId) {
-      // 选中高亮：暖橙 emissive，强度 0.35（规格 §2.6）
-      shadeMat.emissive.set('#ffb27a');
-      shadeMat.emissiveIntensity = 0.35;
+      // P29 强化选中高亮：emissive 从 0.35 提到 0.6，颜色更醒目
+      shadeMat.emissive.set('#ff9548');
+      shadeMat.emissiveIntensity = 0.6;
     } else {
       shadeMat.emissiveIntensity = clamp01(level) * SHADE_EMISSIVE_SCALE;
     }
@@ -1338,8 +1338,8 @@ export class SceneEngine {
     // 立即设置新灯的选中高亮
     const mat = entry.shade?.material as MeshStandardMaterial | undefined;
     if (mat) {
-      mat.emissive.set('#ffb27a');
-      mat.emissiveIntensity = 0.35;
+      mat.emissive.set('#ff9548');
+      mat.emissiveIntensity = 0.6;
     }
   }
 
