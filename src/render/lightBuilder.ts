@@ -33,23 +33,13 @@
  * 可视化替身，若让它投射阴影，会把自己的光照成一片黑斑。
  */
 
-import {
-  CircleGeometry,
-  Color,
-  CylinderGeometry,
-  Mesh,
-  MeshStandardMaterial,
-  Object3D,
-  PointLight,
-  RectAreaLight,
-  SphereGeometry,
-  SpotLight,
-} from 'three';
+import { Color, Mesh, Object3D, PointLight, RectAreaLight, SpotLight } from 'three';
 import type { DataTexture, Light } from 'three';
-import type { Fixture, Photometric, ShadeForm } from '../core/types.js';
+import type { Fixture, Photometric } from '../core/types.js';
 import { computeBeamAngle } from './iesParser.js';
 import { createSpotlightPatternTexture } from './iesTexture.js';
 import { getIESForFixture } from './iesCache.js';
+import { buildFixtureModel } from './fixtureModels.js';
 
 /** 均匀球面折算系数：lm → cd（I = Φ / 4π） */
 const STERADIAN_SPHERE = 4 * Math.PI;
@@ -208,29 +198,6 @@ function declaresIES(photometric: Photometric): boolean {
  */
 export const SHADE_VISUAL_SCALE = 6.0;
 
-/** 按 shape.form 选择灯罩几何：球/盘类用贴合造型，圆柱/圆筒/锥筒兜底成 CylinderGeometry。 */
-function shadeGeometry(form: ShadeForm, diameter: number, height: number): SphereGeometry | CircleGeometry | CylinderGeometry {
-  // P29：半径与高度都有下限，即使 shape.diameter=0 也不会退化
-  const radius = Math.max(0.02, diameter / 2) * SHADE_VISUAL_SCALE;
-  const h = Math.max(0.05, height) * SHADE_VISUAL_SCALE;
-  switch (form) {
-    case 'sphere':
-      return new SphereGeometry(radius, 16, 12);
-    case 'disc':
-    case 'plane':
-      return new CircleGeometry(radius, 24);
-    case 'cylinder':
-    case 'line':
-      return new CylinderGeometry(radius, radius, h, 12);
-    case 'cone':
-      return new CylinderGeometry(0.01, radius, h, 12);
-    case 'custom':
-      return new SphereGeometry(radius, 16, 12);
-    default:
-      return new SphereGeometry(radius, 12, 8);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // 构建结果
 // ---------------------------------------------------------------------------
@@ -242,11 +209,12 @@ export interface LightBuildResult {
   /** 物理光源（本实现所有类型都能建模，故总有值） */
   light?: Light;
   /**
-   * 灯罩可视化 Mesh（P8b）。暴露给引擎：setFixtureLevel 同步
-   * `emissiveIntensity`、setFixtureCct 同步 `emissive` 颜色，
-   * 让灯具是「可见的发光体」而非隐形光源。
+   * 灯罩可视化 Mesh（P8b；P30 起由 fixtureModels 提供独立几何）。
+   * 暴露给引擎：setFixtureLevel 同步 `emissiveIntensity`、setFixtureCct
+   * 同步 `emissive` 颜色，让灯具是「可见的发光体」而非隐形光源。
+   * fixtureModels 总是返回 Mesh，故类型收窄为 `Mesh`（P30 §2.5）。
    */
-  shade: Mesh | null;
+  shade: Mesh;
   /** 声明了 IES 文件（但本阶段未真实解析，仍为近似） */
   isIES: boolean;
   /** 配光是否为近似值（用于 UI 标注，工程红线 5） */
@@ -418,31 +386,30 @@ export function buildLightFromFixture(f: Fixture): LightBuildResult {
     }
   }
 
-  // --- 灯罩 Mesh（可视化替身 + 可见发光体，P8b） --------------------------
-  // 除反射光外，让灯罩自身发光（emissive）：灯具是「可见的亮点」而非隐形光源。
-  // emissive 颜色 = 光源色温色（cctToRGB）；emissiveIntensity 初始按全亮，
-  // 由引擎 setFixtureLevel 按当前 level 同步（公式见 sceneEngine）。
-  const shade = f.shape.shade;
-  const shadeMat = new MeshStandardMaterial({
-    color: new Color(shade.color),
-    roughness: shade.roughness,
-    metalness: shade.metalness,
-    emissive: new Color(r, g, b),
-    emissiveIntensity: SHADE_EMISSIVE_SCALE,
-  });
-  const shadeMesh = new Mesh(shadeGeometry(f.shape.form, f.shape.diameter, f.shape.height), shadeMat);
-  // P11 位置 bug 修复：group 已在 (fx, fy, fz)（见上 group.position.set），
-  // 这里再 set(fx, fy, fz) 会双重偏移——实际渲染位置是 fixture 位置的两倍。
-  // shadeMesh 相对 group 是原点 (0,0,0)，即灯罩就长在 group 的 fixture 位置。
-  // 保留这一行以显式设 local origin，避免后续误加偏移。
-  shadeMesh.position.set(0, 0, 0);
-  // 出光面朝向 = rot 姿态
-  shadeMesh.rotation.set(f.rot.pitch, f.rot.yaw, 0);
+  // --- 灯罩 Mesh（可视化替身 + 可见发光体，P8b → P30 独立几何）------------
+  // P30 起由 fixtureModels.buildFixtureModel 生成 8 类灯具的独立几何组
+  // （外壳 + 灯罩 + 支架），本函数不再按 shape.form 兜底成 cylinder/disc。
+  // 灯罩是发光体（emissive），供 sceneEngine.applyFixtureIntensity 与
+  // applyFixtureCct 按 level / 色温 / 选中态更新——sceneEngine 拿到的
+  // `entry.shade` 就是这里的 shadeMesh 引用，无论在场景图哪个层级，
+  // material 都能访问。
+  //
+  // light 已在 (fx, fy, fz)；modelGroup 是 group 的子节点（group 已在
+  // (fx, fy, fz)），因此 modelGroup 相对父 group 是 origin，让整体灯具
+  // 长在 fixture 位置。
+  //
+  // rot（pitch/yaw）保留：让灯具随 rot 姿态出光。modelGroup 承载全部
+  // 子 mesh，rotate group 一次即旋转整组（灯罩 + 支架 + 外壳）。
+  const { group: modelGroup, shade: shadeMesh } = buildFixtureModel(f);
+  modelGroup.position.set(0, 0, 0);
+  modelGroup.rotation.set(f.rot.pitch, f.rot.yaw, 0);
+  group.add(modelGroup);
+  // shadeMesh 已在 modelGroup 内；重命名带 `-shade` 后缀（P29b 拖放
+  // 命中判定依赖 name.endsWith('-shade')）。
+  shadeMesh.name = `${f.id}-shade`;
   // 灯罩不投/收阴影：否则它会把自家光源照成黑斑
   shadeMesh.castShadow = false;
   shadeMesh.receiveShadow = false;
-  shadeMesh.name = `${f.id}-shade`;
-  group.add(shadeMesh);
 
   return { object: group, light, shade: shadeMesh, isIES, approximated };
 }
