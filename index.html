@@ -123,6 +123,11 @@
     .hud-toggle:hover .hud-label { color: var(--text-primary); }
     .hud-toggle .hud-caret { margin-left: auto; font-size: var(--font-size-xs); color: var(--text-muted); }
     .hud-details { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
+
+    /* Phase 1：撤销/重做按钮（overlay 内、hud-block 底部） */
+    .undo-redo-bar { display: flex; gap: 6px; margin-top: 6px; }
+    .undo-redo-bar button { background: var(--bg-panel); border: 1px solid rgba(255, 255, 255, 0.10); border-radius: var(--radius-xs); padding: 2px 8px; font-size: var(--font-size-xs); color: var(--text-secondary); cursor: pointer; }
+    .undo-redo-bar button:disabled { opacity: 0.4; cursor: default; }
     .hud-row { display: flex; justify-content: space-between; gap: 16px; }
     .hud-label { color: var(--text-muted); font-size: var(--font-size-xs); }
     .hud-value { color: var(--text-white); font-size: var(--font-size-lg); font-variant-numeric: tabular-nums; }

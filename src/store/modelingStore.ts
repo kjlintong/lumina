@@ -4,19 +4,14 @@ import { immer } from 'zustand/middleware/immer';
 import type { ModelGeometry } from '../core/modeling.js';
 import { DEFAULT_WALL_THICKNESS, MODEL_SCHEMA_ID } from '../core/modeling.js';
 import type { RoomPolygon, WallSegment } from '../core/modeling.js';
-import { UndoStack, applyUserEdit } from '../core/confidence.js';
+import { applyUserEdit } from '../core/confidence.js';
 import { HOUSE_TEMPLATES, getTemplate } from '../core/templates.js';
 import { calibrate, confirmScale } from '../core/scale.js';
 import type { LengthUnit } from '../core/scale.js';
 import { useProjectStore } from './projectStore.js';
+import { pushCommand, undoCommand, redoCommand, commandStack } from './commandBus.js';
 
 enableMapSet();
-
-// ---------------------------------------------------------------------------
-// 模块级 UndoStack（不进 zustand state，避免被 immer draft 化）
-// ---------------------------------------------------------------------------
-
-const undoStack = new UndoStack<ModelGeometry>();
 
 // ---------------------------------------------------------------------------
 // 空画布（描墙起点）
@@ -157,29 +152,37 @@ export const useModelingStore = create<ModelingState>()(
     applyTemplate: (id) => {
       const t = getTemplate(id);
       if (t === undefined) return;
-      const prev = get().model;
+      const prev = structuredClone(get().model);
       const next = structuredClone(t.model);
-      undoStack.push({
-        elementId: id,
+      pushCommand({
         label: '应用模板',
-        before: structuredClone(prev),
-        after: structuredClone(next),
+        execute: () => {
+          set({ selectedTemplateId: id, model: next, pendingVertices: [] });
+          syncToProjectStore();
+        },
+        undo: () => {
+          // 与旧 UndoStack 语义一致：只还原 model，selectedTemplateId 由 findTemplateId 反推
+          set({ selectedTemplateId: findTemplateId(prev), model: prev });
+          syncToProjectStore();
+        },
       });
-      set({ selectedTemplateId: id, model: next, pendingVertices: [] });
-      syncToProjectStore();
     },
 
     clearModel: () => {
-      const prev = get().model;
+      const prev = structuredClone(get().model);
       const next = emptyModel();
-      undoStack.push({
-        elementId: '__clear__',
+      pushCommand({
         label: '清空模型',
-        before: structuredClone(prev),
-        after: structuredClone(next),
+        execute: () => {
+          set({ selectedTemplateId: null, model: next, pendingVertices: [] });
+          syncToProjectStore();
+        },
+        undo: () => {
+          // 与旧 UndoStack 语义一致：只还原 model，selectedTemplateId 由 findTemplateId 反推
+          set({ selectedTemplateId: findTemplateId(prev), model: prev });
+          syncToProjectStore();
+        },
       });
-      set({ selectedTemplateId: null, model: next, pendingVertices: [] });
-      syncToProjectStore();
     },
 
     addPendingVertex: (vertex) => {
@@ -195,7 +198,7 @@ export const useModelingStore = create<ModelingState>()(
     commitRoom: (roomName) => {
       const { pendingVertices } = get();
       if (pendingVertices.length < 3) return;
-      const prev = get().model;
+      const prev = structuredClone(get().model);
 
       // 首末闭合
       let vertices = pendingVertices;
@@ -212,14 +215,18 @@ export const useModelingStore = create<ModelingState>()(
       next.walls = [...next.walls, ...walls];
       next.track = { track: 'scan', guaranteesUniformError: false };
 
-      undoStack.push({
-        elementId: roomId,
+      pushCommand({
         label: `描墙: ${roomName}`,
-        before: structuredClone(prev),
-        after: structuredClone(next),
+        execute: () => {
+          set({ model: next, pendingVertices: [], isDrawing: false });
+          syncToProjectStore();
+        },
+        undo: () => {
+          // 与旧 UndoStack 语义一致：只还原 model
+          set({ model: prev });
+          syncToProjectStore();
+        },
       });
-      set({ model: next, pendingVertices: [], isDrawing: false });
-      syncToProjectStore();
     },
 
     setGridSnap: (v) => set({ gridSnap: v }),
@@ -238,26 +245,30 @@ export const useModelingStore = create<ModelingState>()(
     },
 
     clearImport: () => {
-      const prev = get().model;
+      const prev = structuredClone(get().model);
       const next = emptyModel();
-      undoStack.push({
-        elementId: '__clear_import__',
+      pushCommand({
         label: '清空导入',
-        before: structuredClone(prev),
-        after: structuredClone(next),
+        execute: () => {
+          set({
+            importedImage: null,
+            importImageName: null,
+            calibrationPoints: [],
+            isCalibrating: false,
+            calibrationError: null,
+            selectedTemplateId: null,
+            model: next,
+            pendingVertices: [],
+            isDrawing: false,
+          });
+          syncToProjectStore();
+        },
+        undo: () => {
+          // 与旧 UndoStack 语义一致：只还原 model，不动 importedImage 等其他字段
+          set({ selectedTemplateId: findTemplateId(prev), model: prev });
+          syncToProjectStore();
+        },
       });
-      set({
-        importedImage: null,
-        importImageName: null,
-        calibrationPoints: [],
-        isCalibrating: false,
-        calibrationError: null,
-        selectedTemplateId: null,
-        model: next,
-        pendingVertices: [],
-        isDrawing: false,
-      });
-      syncToProjectStore();
     },
 
     addCalibrationPoint: (x, y) => {
@@ -311,28 +322,16 @@ export const useModelingStore = create<ModelingState>()(
     },
 
     undo: () => {
-      const entry = undoStack.undo();
-      if (entry === null) return;
-      set({
-        model: structuredClone(entry.before),
-        selectedTemplateId: findTemplateId(entry.before),
-      });
-      syncToProjectStore();
+      undoCommand();
     },
 
     redo: () => {
-      const entry = undoStack.redo();
-      if (entry === null) return;
-      set({
-        model: structuredClone(entry.after),
-        selectedTemplateId: findTemplateId(entry.after),
-      });
-      syncToProjectStore();
+      redoCommand();
     },
 
-    canUndo: () => undoStack.canUndo(),
-    canRedo: () => undoStack.canRedo(),
+    canUndo: () => commandStack.canUndo(),
+    canRedo: () => commandStack.canRedo(),
   })),
 );
 
-export { HOUSE_TEMPLATES, emptyModel, undoStack };
+export { HOUSE_TEMPLATES, emptyModel };

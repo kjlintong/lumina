@@ -1,12 +1,13 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ImportPanel } from '../panels/ImportPanel.js';
-import { useModelingStore, undoStack } from '../../store/modelingStore.js';
+import { useModelingStore } from '../../store/modelingStore.js';
+import { commandStack } from '../../store/commandBus.js';
 import { useProjectStore, createInitialProject } from '../../store/projectStore.js';
 import { HOUSE_TEMPLATES } from '../../core/templates.js';
 
 beforeEach(() => {
-  undoStack.clear();
+  commandStack.clear();
   useModelingStore.setState({
     selectedTemplateId: null,
     model: structuredClone(HOUSE_TEMPLATES[0]!.model),

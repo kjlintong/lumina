@@ -21,9 +21,22 @@ import { immer } from 'zustand/middleware/immer';
 import * as binding from '../core/binding.js';
 import { makeFixture } from '../core/makeFixture.js';
 import type { FixtureOptions } from '../core/makeFixture.js';
-import type { ActivityZoneType, Fixture, LuminaProject } from '../core/types.js';
+import type { ActivityZoneType, Fixture, FixtureType, LuminaProject } from '../core/types.js';
 import { makeZone, ZONE_TYPE_TEMPLATES } from '../core/zoneTypes.js';
 import { SceneSystem } from '../scene/sceneSystem.js';
+import { pushCommand } from './commandBus.js';
+
+/** 命令栈 label 用的中文类型名（与 FixturePanel.FIXTURE_TYPE_LABELS 平行；store 层不能引 UI） */
+const FIXTURE_TYPE_LABELS: Record<FixtureType, string> = {
+  downlight: '筒灯',
+  spot: '射灯',
+  pendant: '吊灯',
+  linear: '线性灯',
+  cove: '灯带',
+  sconce: '壁灯',
+  floor: '落地灯',
+  table: '台灯',
+};
 
 // project 内含 Set（Fixture.lockedFields），immer 需要 MapSet 插件才能 draft 它们
 enableMapSet();
@@ -268,19 +281,48 @@ export const useProjectStore = create<ProjectState>()(
 
     addFixture: (opts) => {
       const fixture = makeFixture(opts);
-      const p = get().project;
-      set({
-        project: { ...p, fixtures: { ...p.fixtures, [fixture.id]: fixture } },
-        selectedFixtureId: fixture.id,
+      const fixtureSnapshot = structuredClone(fixture);
+      const label = `新增${FIXTURE_TYPE_LABELS[fixture.type] ?? '灯具'}`;
+      pushCommand({
+        label,
+        execute: () => {
+          get().project = {
+            ...get().project,
+            fixtures: { ...get().project.fixtures, [fixtureSnapshot.id]: fixtureSnapshot },
+          };
+          get().selectedFixtureId = fixtureSnapshot.id;
+        },
+        undo: () => {
+          get().project = binding.removeFixture(get().project, fixtureSnapshot.id);
+          if (get().selectedFixtureId === fixtureSnapshot.id) {
+            get().selectedFixtureId = null;
+          }
+        },
       });
       return fixture.id;
     },
 
     removeFixture: (fixtureId) => {
-      const next = binding.removeFixture(get().project, fixtureId);
-      if (next === get().project) return;
-      const selectedFixtureId = get().selectedFixtureId === fixtureId ? null : get().selectedFixtureId;
-      set({ project: next, selectedFixtureId });
+      const p = get().project;
+      const cur = p.fixtures[fixtureId];
+      if (!cur) return;
+      const before = structuredClone(p);
+      const beforeSelected = get().selectedFixtureId;
+      const fixtureSnap = structuredClone(cur);
+      pushCommand({
+        label: `删除${FIXTURE_TYPE_LABELS[cur.type] ?? '灯具'}`,
+        execute: () => {
+          get().project = binding.removeFixture(get().project, fixtureId);
+          get().selectedFixtureId = get().selectedFixtureId === fixtureId ? null : get().selectedFixtureId;
+        },
+        undo: () => {
+          get().project = {
+            ...before,
+            fixtures: { ...before.fixtures, [fixtureSnap.id]: fixtureSnap },
+          };
+          get().selectedFixtureId = beforeSelected;
+        },
+      });
     },
 
     updateFixture: (fixtureId, patch) => {
@@ -306,12 +348,40 @@ export const useProjectStore = create<ProjectState>()(
       if (paths.length > 0) {
         next.lockedFields = new Set([...next.lockedFields, ...paths]);
       }
-      set({ project: { ...p, fixtures: { ...p.fixtures, [fixtureId]: next } } });
+
+      // 深拷贝快照：before = cur（未锁定前的原状），after = next（含锁定）
+      const beforeSnap = structuredClone(cur);
+      const afterSnap = structuredClone(next);
+      pushCommand({
+        label: '修改灯具',
+        execute: () => {
+          get().project = {
+            ...get().project,
+            fixtures: { ...get().project.fixtures, [fixtureId]: afterSnap },
+          };
+        },
+        undo: () => {
+          get().project = {
+            ...get().project,
+            fixtures: { ...get().project.fixtures, [fixtureId]: beforeSnap },
+          };
+        },
+      });
     },
 
     moveFixture: (fixtureId, pos) => {
-      const { project, autoUnbound } = binding.moveFixture(get().project, fixtureId, pos);
-      if (project !== get().project) set({ project });
+      const p = get().project;
+      const cur = p.fixtures[fixtureId];
+      if (!cur) return { autoUnbound: false };
+      const { project: movedProject, autoUnbound } = binding.moveFixture(p, fixtureId, pos);
+      if (movedProject === p) return { autoUnbound };
+      const beforeSnap = structuredClone(p);
+      const afterSnap = structuredClone(movedProject);
+      pushCommand({
+        label: '移动灯具',
+        execute: () => { get().project = afterSnap; },
+        undo: () => { get().project = beforeSnap; },
+      });
       return { autoUnbound };
     },
 
@@ -323,8 +393,20 @@ export const useProjectStore = create<ProjectState>()(
      * 又是「手动改字段」（应锁定 pos，ADR-17），两步合一。
      */
     moveAndLockFixture: (fixtureId, pos) => {
-      const { autoUnbound } = get().moveFixture(fixtureId, pos);
-      get().lockField(fixtureId, 'pos');
+      const p = get().project;
+      const cur = p.fixtures[fixtureId];
+      if (!cur) return { autoUnbound: false };
+      const { project: moved, autoUnbound } = binding.moveFixture(p, fixtureId, pos);
+      if (moved === p) return { autoUnbound };
+      const afterProject = binding.lockField(moved, fixtureId, 'pos');
+      if (afterProject === moved) return { autoUnbound };
+      const beforeSnap = structuredClone(p);
+      const afterSnap = structuredClone(afterProject);
+      pushCommand({
+        label: '移动并锁定灯具',
+        execute: () => { get().project = afterSnap; },
+        undo: () => { get().project = beforeSnap; },
+      });
       return { autoUnbound };
     },
 

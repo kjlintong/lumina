@@ -33,6 +33,8 @@ import { FloorPlan } from './ui/panels/FloorPlan.js';
 import { HudStats } from './ui/panels/HudStats.js';
 import type { HudStats as HudStatsData } from './ui/panels/HudStats.js';
 import { BuildBadge } from './ui/panels/BuildBadge.js';
+import { UndoRedoBar } from './ui/panels/UndoRedoBar.js';
+import { useUndoRedoShortcut } from './ui/hooks/useUndoRedoShortcut.js';
 
 // ---------------------------------------------------------------------------
 // store → engine 同步（transient subscribe，不触发 React 重渲染）
@@ -214,6 +216,9 @@ export default function App() {
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<SceneEngine | null>(null);
   const controllerRef = useRef<SceneController | null>(null);
+
+  // Phase 1：全局 Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y 快捷键（input 保护）
+  useUndoRedoShortcut();
 
   const [ready, setReady] = useState(false);
   const [backendType, setBackendType] = useState<BackendType>('webgl2');
@@ -549,6 +554,7 @@ export default function App() {
           <div className="info">渲染后端: {backendType.toUpperCase()}</div>
           <div className="info">时间: {timeInfo}</div>
           {sunset && <div className="warning">日落时段 — 暖光模拟中</div>}
+          <UndoRedoBar />
         </div>
         <div className="hud-block">
           <HudStats stats={renderStats} />
