@@ -1349,6 +1349,40 @@ export class SceneEngine {
   }
 
   /**
+   * 诊断：返回 scene 里所有 fixture group 的信息（P29b 排错用）。
+   * 用于查看新拖入的灯具实际位置、group 名、以及是否被 TransformControls 挂接。
+   */
+  getFixtureDiagnostics(): Array<{
+    id: string;
+    pos: [number, number, number];
+    isAttached: boolean;
+    hasShade: boolean;
+    shadeVisible: boolean;
+    shadeChildren: number;
+  }> {
+    const result: Array<{
+      id: string;
+      pos: [number, number, number];
+      isAttached: boolean;
+      hasShade: boolean;
+      shadeVisible: boolean;
+      shadeChildren: number;
+    }> = [];
+    for (const [id, entry] of this.fixtureLights) {
+      const obj = entry.object;
+      result.push({
+        id,
+        pos: [obj.position.x, obj.position.y, obj.position.z],
+        isAttached: id === this.attachedFixtureId,
+        hasShade: !!entry.shade,
+        shadeVisible: entry.shade?.visible ?? false,
+        shadeChildren: obj.children.length,
+      });
+    }
+    return result;
+  }
+
+  /**
    * 设置拖拽结束回调（App 层订阅，写入 store 并走命令栈）。传 null 解除。
    * 回调签名：(fixtureId, newPos) => void；newPos 已经是 50mm 网格吸附后的世界坐标。
    */

@@ -149,6 +149,35 @@ window.__lumina = {
     return Object.keys(st.project.fixtures).length;
   },
 
+  /** P29b 排错：列出 engine 里的所有灯具 fixture group（位置、是否被 TransformControls 挂接） */
+  fixtures() {
+    const r = ready();
+    if (!r) return { ready: false };
+    return r.engine.getFixtureDiagnostics ? r.engine.getFixtureDiagnostics() : 'getFixtureDiagnostics 未定义';
+  },
+
+  /** P29b 排错：强制让 engine 从 store 重新同步所有灯具（走 addFixture） */
+  resyncFixtures() {
+    const r = ready();
+    if (!r) return -1;
+    const st = useProjectStore.getState();
+    const fixtures = Object.values(st.project.fixtures);
+    for (const f of fixtures) r.engine.addFixture(f);
+    return fixtures.length;
+  },
+
+  /** P29b 排错：把 store 里的所有灯具 id 与 pos 打出来（不含 engine 侧状态） */
+  storeFixtures() {
+    const st = useProjectStore.getState();
+    return Object.values(st.project.fixtures).map((f) => ({
+      id: f.id,
+      type: f.type,
+      mount: f.mount,
+      pos: [...f.pos],
+      shape: f.shape,
+    }));
+  },
+
   /** 抓真实引擎状态（数值，不是 vision 猜测） */
   stats(): any {
     const r = ready();

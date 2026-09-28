@@ -231,12 +231,26 @@ function handleDropFixture(
   );
   raycaster.setFromCamera(pointerNdc, engine.getCamera());
   const hits = raycaster.intersectObjects(engine.getScene().children, true);
-  // 找第一个命中几何体（墙体/地面/天花都是 Mesh；跳过灯具子 mesh，让 drop 只落在环境面上）
-  const store = useProjectStore.getState();
+  // 找第一个"不在灯具 group 内部"的命中面（墙体/地面/天花都是 Mesh）。
+  // P29b 修复：默认工程已有 3 盏灯的灯罩（SHADE_VISUAL_SCALE=6 后视觉直径 ~1.3m），
+  // 若直接取第一个 hit，很可能落在旧灯罩上（灯罩 mesh 是球/圆柱），新灯被塞到
+  // 旧灯罩内部，从下方看不见；且法线判定错乱。必须跳过所有 fixture 内部命中。
+  const fixtureIds = new Set(Object.keys(useProjectStore.getState().project.fixtures));
+  const isFixtureHit = (obj: import('three').Object3D): boolean => {
+    let cur: import('three').Object3D | null = obj;
+    while (cur) {
+      // 灯罩 mesh 的 name 是 `${fixtureId}-shade`（buildLightFromFixture）
+      if (cur.name.endsWith('-shade')) return true;
+      // fixture group 的 name 就是 fixture.id（buildLightFromFixture）
+      if (fixtureIds.has(cur.name)) return true;
+      cur = cur.parent;
+    }
+    return false;
+  };
   for (const hit of hits) {
+    if (isFixtureHit(hit.object)) continue;
     const face = hit.face;
     if (!face) continue;
-    // 命中面法线是世界空间（raycaster 已按 matrixWorld 转换）
     const nx = face.normal.x;
     const ny = face.normal.y;
     const nz = face.normal.z;
@@ -244,20 +258,17 @@ function handleDropFixture(
     const point = hit.point;
     const rawPos = dropPosFromHit([point.x, point.y, point.z], [nx, ny, nz]);
     const snapped = snapFixturePos(rawPos);
-    const id = store.addFixture({
+    const id = useProjectStore.getState().addFixture({
       type: fixtureType as 'downlight' | 'spot' | 'pendant' | 'linear' | 'cove' | 'sconce' | 'floor' | 'table',
       mount,
       pos: snapped,
     });
-    store.selectFixture(id);
-    // addFixture 走命令栈（executeAndPush），store 已同步。engine 通过
-    // App 的 store.subscribe 自动 addFixture 进场景图；attachFixture 由
-    // selectedFixtureId 变化的 useEffect 触发。此处无需手动 attach。
-    store.setNotice(`已添加灯具（可 Ctrl+Z 撤销）`);
+    useProjectStore.getState().selectFixture(id);
+    useProjectStore.getState().setNotice(`已添加灯具（可 Ctrl+Z 撤销）`);
     return;
   }
-  // 未命中
-  store.setNotice('请拖到墙、天花或地面');
+  // 未命中可放置的表面
+  useProjectStore.getState().setNotice('请拖到墙、天花或地面');
 }
 
 // ---------------------------------------------------------------------------
