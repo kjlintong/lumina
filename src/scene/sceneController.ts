@@ -23,7 +23,7 @@
 import { useProjectStore } from '../store/projectStore.js';
 import type { Fixture } from '../core/types.js';
 import type { SceneEngine } from './sceneEngine.js';
-import { SceneSystem } from './sceneSystem.js';
+import { SceneSystem, PRESET_SCENES } from './sceneSystem.js';
 
 function nowMs(): number {
   return Date.now();
@@ -54,7 +54,11 @@ export class SceneController {
     // SceneSystem 以引用持有灯具并原地改，先克隆 store 数据，绝不碰 store 内对象
     const cloned = structuredClone(state.project.fixtures);
     const map = new Map<string, Fixture>(Object.entries(cloned));
-    const system = new SceneSystem(map);
+    // P34 Part C：把 project.scenes 里的自定义/快速预设追加到内置 6 预设之后
+    // （不覆盖内置），否则 qp-* 场景会抛 SceneNotFoundError。
+    const system = new SceneSystem(map, {
+      presets: [...Object.values(PRESET_SCENES), ...Object.values(state.project.scenes ?? {})],
+    });
     const transition = system.applySmooth(sceneKey); // 未知 key 抛 SceneNotFoundError
 
     // from.levels 以引擎实况为准（见文件头注释）；from.cct 读自 Fixture.electrical.cct，

@@ -14,6 +14,10 @@ import { LUMINA_FIXTURE_DND_MIME } from './ui/panels/FixtureLibraryPanel.js';
 import { serializeProject, deserializeProject } from './core/serialize.js';
 import { SceneEngine } from './scene/sceneEngine.js';
 import { SceneController } from './scene/sceneController.js';
+import {
+  presetToSceneDefinition,
+  type PresetId,
+} from './core/circuitMapping.js';
 import { modelToRoomDims } from './render/modelPlanLayout.js';
 import { MANUAL_LEVEL_KEY, useProjectStore } from './store/projectStore.js';
 import {
@@ -731,7 +735,19 @@ export default function App() {
                 开启后显示照度数值、灯具坐标与渲染调参
               </div>
             </Panel>
-            <ScenePanel onApplyScene={(key) => controllerRef.current?.applyScene(key)} />
+            <ScenePanel
+              onApplyScene={(key) => controllerRef.current?.applyScene(key)}
+              onSavePreset={(id: PresetId) => {
+                const st = useProjectStore.getState();
+                const def = presetToSceneDefinition(
+                  Object.values(st.project.fixtures),
+                  id,
+                );
+                st.upsertScene(def);
+                // 复用已有动画通道：SceneController 读 project.scenes 找 def
+                controllerRef.current?.applyScene(def.key);
+              }}
+            />
             <CameraPanel
               onPresetChange={(key) => engineRef.current?.setCameraPreset(key)}
             />

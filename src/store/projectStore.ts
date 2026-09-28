@@ -21,9 +21,9 @@ import { immer } from 'zustand/middleware/immer';
 import * as binding from '../core/binding.js';
 import { makeFixture } from '../core/makeFixture.js';
 import type { FixtureOptions } from '../core/makeFixture.js';
-import type { ActivityZoneType, Fixture, FixtureType, LuminaProject } from '../core/types.js';
+import type { ActivityZoneType, Fixture, FixtureType, LuminaProject, SceneDefinition } from '../core/types.js';
 import { makeZone, ZONE_TYPE_TEMPLATES } from '../core/zoneTypes.js';
-import { SceneSystem } from '../scene/sceneSystem.js';
+import { SceneSystem, PRESET_SCENES } from '../scene/sceneSystem.js';
 import { pushCommand } from './commandBus.js';
 
 /** 命令栈 label 用的中文类型名（与 FixturePanel.FIXTURE_TYPE_LABELS 平行；store 层不能引 UI） */
@@ -121,6 +121,15 @@ export interface ProjectState {
   applyScene: (sceneKey: string) => void;
   /** 立即应用场景：写终值，不登记过渡 */
   applySceneInstant: (sceneKey: string) => void;
+
+  // -- P34 · Part C：快速预设（会客/观影/阅读） ----------------------------
+  /**
+   * 保存/覆盖一个场景定义到 project.scenes（P34 Part C）。
+   *
+   * 走命令栈以便支持撤销；不登记 sceneTransition（后续由
+   * `SceneController.applyScene` 处理动画通道）。同名 key 会被覆盖。
+   */
+  upsertScene: (def: SceneDefinition) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +228,11 @@ function applySceneToFixtures(
 ): { fixtures: Record<string, Fixture>; durationMs: number } {
   // SceneSystem.apply 原地改灯具，因此先克隆，绝不碰 store 内的对象
   const map = new Map<string, Fixture>(Object.entries(structuredClone(fixtures)));
-  const system = new SceneSystem(map);
+  // P34 Part C：把 project.scenes 里的自定义/快速预设追加到内置 6 预设之后（不覆盖）
+  const customPresets = Object.values(useProjectStore.getState().project.scenes ?? {});
+  const system = new SceneSystem(map, {
+    presets: [...Object.values(PRESET_SCENES), ...customPresets],
+  });
   const durationMs = system.get(sceneKey).transitionMs;
   system.apply(sceneKey); // 写 control.sceneLevels[sceneKey] 与 electrical.cct（锁定字段跳过）
   return { fixtures: Object.fromEntries(map), durationMs };
@@ -449,6 +462,40 @@ export const useProjectStore = create<ProjectState>()(
         activeSceneKey: sceneKey,
         sceneTransition: null,
       });
+    },
+
+    /**
+     * P34 · Part C：保存快速预设到 project.scenes（撤销栈支持）。
+     * 只登记场景，不动 activeSceneKey——由调用方（App 层）随后调
+     * `sceneController.applyScene(key)` 走动画通道。
+     */
+    upsertScene: (def) => {
+      const p = get().project;
+      const scenes = p.scenes ?? {};
+      const beforeSnap = structuredClone(scenes);
+      const afterSnap = structuredClone({ ...scenes, [def.key]: def });
+      const defSnap = structuredClone(def);
+      pushCommand({
+        label: `保存场景：${def.name}`,
+        execute: () => {
+          set({ project: { ...get().project, scenes: { ...get().project.scenes, [defSnap.key]: defSnap } } });
+        },
+        undo: () => {
+          // 撤销时把快照恢复回去；若 defSnap.key 原本不存在则删除之
+          const cur = get().project.scenes ?? {};
+          if (beforeSnap[defSnap.key] === undefined) {
+            const rest: Record<string, SceneDefinition> = { ...cur };
+            delete rest[defSnap.key];
+            set({ project: { ...get().project, scenes: rest } });
+          } else {
+            const restored = beforeSnap[defSnap.key];
+            if (!restored) return;
+            set({ project: { ...get().project, scenes: { ...cur, [defSnap.key]: restored } } });
+          }
+        },
+      });
+      // 立即执行
+      set({ project: { ...p, scenes: afterSnap } });
     },
   })),
 );
