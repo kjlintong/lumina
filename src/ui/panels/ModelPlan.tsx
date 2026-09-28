@@ -1,6 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useModelingStore } from '../../store/modelingStore.js';
+import { useProjectStore } from '../../store/projectStore.js';
 import { isLowConfidence } from '../../core/confidence.js';
+import {
+  luminanceGrid,
+  luminanceToColor,
+  rgbaToString,
+} from '../../lighting/heatmap.js';
 import {
   modelBounds,
   wallsToSvg,
@@ -10,6 +16,7 @@ import {
   computeModelScale,
   wallLabels,
   roomLabels,
+  worldToPlan,
 } from '../../render/modelPlanLayout.js';
 
 /**
@@ -23,6 +30,7 @@ import {
  */
 export function ModelPlan() {
   const { model } = useModelingStore();
+  const fixtures = useProjectStore((s) => s.project.fixtures);
   const width = 400;
   const height = 400;
 
@@ -36,6 +44,20 @@ export function ModelPlan() {
     [bounds, width, height],
   );
   const [showDims, setShowDims] = useState(false);
+  const [showHeatmap, setShowHeatmap] = useState(false);
+
+  // modelBounds 返回 { width, depth }（未中心归零）；heatmap 需要 x0/x1/z0/z1。
+  // 由于场景模型的中心在世界原点（见 modelPlanLayout.modelBounds 注释），
+  // 世界坐标范围就是 ±width/2、±depth/2。
+  const heat = useMemo(() => {
+    if (!showHeatmap || !bounds) return null;
+    const half = bounds.width / 2;
+    const halfD = bounds.depth / 2;
+    return luminanceGrid(Object.values(fixtures), {
+      bounds: { x0: -half, x1: half, z0: -halfD, z1: halfD },
+      step: 0.4,
+    });
+  }, [showHeatmap, bounds, fixtures]);
 
   if (!bounds) {
     return (
@@ -68,6 +90,28 @@ export function ModelPlan() {
             />
           );
         })}
+
+        {/* 照度伪彩（P34 Part D）—— 叠加在墙线下方 */}
+        {heat && (
+          <g opacity={0.55} style={{ pointerEvents: 'none' }} aria-hidden>
+            {heat.lx.map((v, idx) => {
+              const center = heat.cellCenters[idx]!;
+              const p = worldToPlan(center[0], center[1], ox, oy, scale);
+              const cellPx = 0.4 * scale;
+              const color = rgbaToString(luminanceToColor(v, heat.maxLx));
+              return (
+                <rect
+                  key={`h-${idx}`}
+                  x={p.x - cellPx / 2}
+                  y={p.y - cellPx / 2}
+                  width={cellPx}
+                  height={cellPx}
+                  fill={color}
+                />
+              );
+            })}
+          </g>
+        )}
 
         {/* 墙体 */}
         {walls.map((w) => (
@@ -182,6 +226,28 @@ export function ModelPlan() {
           onChange={(e) => setShowDims(e.target.checked)}
         />
         尺寸
+      </label>
+
+      {/* 照度伪彩开关（P34 Part D）—— 尺寸下方 */}
+      <label
+        style={{
+          position: 'absolute',
+          top: 22,
+          right: 8,
+          fontSize: 11,
+          color: 'rgba(255, 255, 255, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 3,
+          cursor: 'pointer',
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={showHeatmap}
+          onChange={(e) => setShowHeatmap(e.target.checked)}
+        />
+        照度
       </label>
     </div>
   );
