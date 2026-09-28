@@ -1003,9 +1003,16 @@ export class SceneEngine {
 
     // ---- 环境光 / 半球光强度：白天拉高、夜晚压低但不归零 ----
     // （归零会被 ACES 压成纯黑；保留 ~0.04–0.05 让夜间仅靠灯具也有可读画面）
+    //
+    // P26b：夜间额外兜底。sunInt < 0.1 时补一条 ambient/hemi 增量（0→0.15），
+    // 让日落过渡带（0.15→0.05）平滑爬升，避免太阳归零的瞬间画面死黑。
+    // 与白天 dayFactor 分量独立叠加，语义是"白天的日影亮度 + 夜晚的补光亮度"。
+    // **不**动 scene.environment（PMREM IBL）的 intensity —— 那是 P12 定的
+    // 白昼/傍晚视觉基调，改它会连带影响白天（审查报告 §一.4 第 1 项）。
     const dayFactor = Math.max(0, sinEl);
-    this.ambientLight.intensity = 0.04 + dayFactor * 0.55;
-    this.hemiLight.intensity = 0.05 + dayFactor * 0.35;
+    const nightAmbientBoost = clamp01((0.1 - this.sunLight.intensity) / 0.1) * 0.15;
+    this.ambientLight.intensity = 0.04 + dayFactor * 0.55 + nightAmbientBoost;
+    this.hemiLight.intensity = 0.05 + dayFactor * 0.35 + nightAmbientBoost;
 
     // ---- 背景 + 半球光颜色：随太阳高度角平滑渐变（P8a 根因 B/C）----
     // 复用 bgColor 实例、就地 setRGB，不每帧 new Color。SRGBColorSpace 让
@@ -1079,7 +1086,7 @@ export class SceneEngine {
       }
     }
 
-    // ---- P9b 曝光分档 ----
+    // ---- P9b 曝光分档 + P26b 入夜修订 ----
     // 旧逻辑用 AutoExposure.targetLuminance = 0.17 做动态曝光，但 0.17 是
     // sRGB 中间灰，对应的 linear 亮度 ≈ 0.024；我们的场景是 HDR 渲染
     // （sunLight.intensity 最高 3.0、灯罩 emissive 无上限），采样回来的 linear
@@ -1088,11 +1095,19 @@ export class SceneEngine {
     //
     // 新方案：按太阳状态分两档曝光，不做完整 autoExposure。
     //   - 白天（sunInt > 0.2）：exposure = 1.0（ACES 自己处理 HDR）
-    //   - 夜晚（sunInt < 0.05）：exposure = 0.5（让室内灯具成为主视觉）
+    //   - 夜晚（sunInt < 0.05）：exposure = 1.6（P26b 修订；旧值 0.5 会让
+    //     默认工程 3 盏灯 1800lm 在 ACES 下画面死黑）
     //   - 过渡：线性插值
     // AutoExposure 类保留（未来可能恢复），但 update() 不再被每帧调用。
+    //
+    // P26b 根因（审查方案 §一.4 第 1 项 + §二 Phase 0 第 3 项）：
+    // 默认工程三盏灯（downlight 400lm + pendant 800lm + floor 600lm ≈ 1800lm）
+    // 在 ACES + exposure 0.5 下撑不起暗场视觉主导。人工光源主导的夜晚场景，
+    // 曝光应比白天略高（不是略低），让室内灯具成为主视觉锚点。1.6 是 ACES
+    // 3000–4000K 灯罩 800lm 类光源的经验下限；再高会过曝，再低画面死黑。
+    // 具体数字允许在 1.4–2.0 之间在真实 GPU 上以固定机位截图迭代。
     const nightFactor = clamp01((0.2 - this.sunLight.intensity) / 0.15); // 0（白天）→ 1（夜晚）
-    const sunExposure = 1.0 - nightFactor * 0.5; // 1.0 → 0.5
+    const sunExposure = 1.0 + nightFactor * 0.6; // 1.0 → 1.6（P26b）
 
     // ---- P20：场景预设曝光优先（§5 曝光矩阵）----
     // 有激活场景预设且它声明了 exposure 时，用它覆盖太阳分档。

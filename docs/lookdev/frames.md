@@ -79,3 +79,58 @@
 > 暂无截图。首张截图由用户在真实 GPU 机器上跑后提交。
 
 <!-- 追加记录 -->
+
+---
+
+## P26b 入夜画面验收帧
+
+> 阶段：P26b（Phase 0 止血 · 入夜画面），对应 `src/scene/sceneEngine.ts` 里
+> 夜间曝光 1.0→1.6 与 ambient/hemi 夜间兜底两处修订。
+> **画面判定权在用户；WSL2 SwiftShader 截图不作数**（方案 §三.1）。
+> 下列帧必须由用户在真实 GPU、1920×1080、默认相机「房间内东南角望中心」、
+> 默认工程三盏灯全部可见且亮度 = 1.0 的前提下截图判定。
+
+### 帧 17:45（P26a 已默认冻结）—— 不允许劣化
+
+- 天花板接近白色但不过曝
+- 窗外有暖色日落光（太阳圆盘透玻璃）
+- 桌面反光可见（木地板板缝高光带）
+- 与既有 P18 交付一致；如视觉劣化，回滚 P26b
+
+### 帧 20:00（`__lumina.setHour(20)`，等 2s）—— 人工光主导
+
+- **天花最亮**（P20「会客」预设 exposure 语义下的天花高光可见）
+- **桌面次亮**（反射面存在，反射光源位置可见）
+- **墙面有洗墙光斑**（吊灯 / 落地灯投射出柔和的墙面渐变，不死黑也不过曝白）
+- **地面暗部有细节**（地板纹理 / 家具轮廓可见，暗部不是纯 0 值）
+
+### 帧 21:00（`__lumina.setHour(21)`，等 2s）—— 深夜
+
+- 人工光仍是主视觉（3 盏灯 1800lm + ambient/hemi 兜底 ≈ 0.19 ambient / 0.50 hemi）
+- 灯体 emissive 触发 Bloom（不糊整墙）
+- 无体积光柱（只有太阳产光柱）
+- 暗部有细节，不是死黑
+
+### 帧 14:00（`__lumina.setHour(14)`，等 2s）—— 正午回归测试
+
+- 白天视觉不能被夜间修订拖累（P26b 只在 sunInt < 0.1 时补 ambient/hemi）
+- exposure 应回到 1.0（nightFactor = 0）
+- 与 P18 帧 A（17:45）风格一致，冷暖对比明确
+
+### 诊断工具
+
+```js
+// 1. 设时刻，等 2s 让 sunLight 更新
+__lumina.setHour(20);
+// 2. 抓引擎状态（toneMappingExposure / lights / renderInfo）
+__lumina.stats();
+```
+
+`stats()` 已完整输出 hour / toneMappingExposure / lights[]（含 ambient、hemi、
+所有 fixture 的 intensity 与 visible）/ renderInfo（drawCalls / triangles /
+textures）。**未新增** `nightSnapshot()`（§3.4 允许省略：stats() 已够用）。
+
+### 判定
+
+四张截图（17:45 / 20:00 / 21:00 / 14:00）+ `stats()` JSON 是**唯一**验收
+依据；任一张不达标 = 阶段未完成。判定权在用户，子代理不声称画面达标。
