@@ -26,27 +26,22 @@ ActivityZone（需求侧）描述"人在这里要什么光"；Fixture（供给�
 
 ## 关键 Three.js r186 API 事实（P0 实测验证）
 
-### 导入路径
+### 导入路径（P26a 冻结 WebGPU，WebGL2 单后端）
 ```typescript
-// 主入口（WebGL 侧）
 import { Scene, PerspectiveCamera, WebGLRenderer, ACESFilmicToneMapping,
          AmbientLight, DirectionalLight, HemisphereLight, SpotLight,
-         PointLight, MeshStandardMaterial, BoxGeometry } from 'three';
+         PointLight, MeshStandardMaterial, BoxGeometry,
+         WebGLRenderTarget, HalfFloatType, NoToneMapping, PCFSoftShadowMap } from 'three';
 
-// WebGPU 渲染器（独立 entry，不在 three 主入口导出）
-import { WebGPURenderer } from 'three/webgpu';
-
-// IES 相关（WebGPU 专属）
-// IESSpotLight 在 'three' 内部，不在主入口导出
-// IESLoader 在 'three/examples/jsm/loaders/IESLoader.js'
-// GodraysNode 在 'three/examples/jsm/tsl/display/GodraysNode.js'
+// 后处理链（P7 / P9 / P16 定型）：RenderPass → Godrays → UnrealBloom → OutputPass
+// 后期 Pass 位于 three/examples/jsm/postprocessing/*
+import { EffectComposer, RenderPass, UnrealBloomPass, OutputPass } from 'three/examples/jsm/postprocessing';
 ```
 
-### 重要限制
-- `EffectComposer` 是 WebGL 专属，硬编码 `WebGLRenderTarget`，不能与 WebGPURenderer 混用
-- `WebGPURenderer` 不在 `three` 主入口导出，必须从 `three/webgpu` 导入
-- `IESSpotLight` 在 `three/src/lights/webgpu/IESSpotLight.js`，不在主入口
-- 双后端后期链不做像素一致承诺
+### 重要限制（P26a 后）
+- 仅 WebGL2 单后端；`three/webgpu`、`WebGPURenderer`、`IESSpotLight` 已删除
+- IES 走 `src/render/iesParser.ts` + spot 纹理近似路径（`createSpotlightPatternTexture`），不走 `IESSpotLight`
+- 构建产物只允许 2 个 chunk（`index-*.js` + `three-*.js`）；`vite.config.ts` 的 `manualChunks` 不得再加 `'three-webgpu'` 条目
 
 ## 代码规范
 
