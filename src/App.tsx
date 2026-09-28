@@ -259,6 +259,8 @@ function handleDropFixture(
     hitUsed = hit;
     break;
   }
+  // TypeScript 无法通过循环里的 'if (!hit.face) continue;' 收窄类型，
+  // 保留防御性检查（运行时不会走到这里，但让 tsc 通过）。
   if (!hitUsed || !hitUsed.face) {
     useProjectStore.getState().setNotice('请拖到墙、天花或地面');
     return;
