@@ -89,6 +89,10 @@ P8 六阶段全部完成，测试 310 → 435 条。时间轴经用户验收改�
 | P28 Phase 1 · 灯具库 + 拖放 + TransformControls | ✅ 已提交（`a2c664b`） | `docs/p28-phase1-fixture-drag-spec.md`（2026-09-28） |
 | P29 灯具可见性修复（法线判定反转 + 视觉放大 + 拖放修复） | ✅ 已提交（`97e2150` + `1ae3d31` + `dfdbc0a`） | `docs/p29-fixture-visibility-spec.md`（2026-09-28） |
 | P30 灯具类型独立几何模型（8 类各有造型） | ✅ 已提交（`69cd721`） | `docs/p30-fixture-models-spec.md`（2026-09-28） |
+| P31a 修复 fixtureModels ↔ lightBuilder 循环依赖导致黑屏 | ✅ 已提交（`1694de4`） | — |
+| P31b 灯具视觉尺度 6.0 → 3.0（物理合理） | ✅ 已提交（`cfd24e8`） | — |
+| P32a 拖放落点 NDC Y 轴误用 clientX + 清 debug log | ✅ 已提交（`1c70db1`） | — |
+| P32b Node 26 下 jsdom `window.localStorage` 变 undefined 的测试回归 | ✅ 已提交（`a353483`，vitest.setup.ts 补内存版 Storage polyfill） | — |
 
 ### Phase 0 止血（源自 `Lumina项目审查与后续工作方案.md` §二）
 
