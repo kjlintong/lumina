@@ -11,8 +11,10 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/react';
 import { LayoutPanel } from '../panels/LayoutPanel.js';
 import { useProjectStore, createInitialProject } from '../../store/projectStore.js';
+import { useModelingStore, emptyModel } from '../../store/modelingStore.js';
 import { undoCommand, commandStack } from '../../store/commandBus.js';
 import type { ModelGeometry, WallSegment, RoomPolygon } from '../../core/modeling.js';
+import type { LuminaProject } from '../../core/types.js';
 
 function makeEmptyModel(): ModelGeometry {
   return {
@@ -50,11 +52,12 @@ function makeRoom(): RoomPolygon {
 
 function withModel(model: ModelGeometry | null): void {
   const base = createInitialProject();
-  if (model === null) {
-    useProjectStore.setState({ project: { ...base, fixtures: {} } });
-  } else {
-    useProjectStore.setState({ project: { ...base, fixtures: {}, model } });
-  }
+  const project = model === null
+    ? { ...base, fixtures: {} as LuminaProject['fixtures'] }
+    : { ...base, fixtures: {} as LuminaProject['fixtures'], model };
+  useProjectStore.setState({ project });
+  // LayoutPanel 现在直接从 modelingStore 读 model（避免 applyTemplate → syncToProjectStore 未 re-render 的问题）
+  useModelingStore.setState({ model: model ?? emptyModel() });
 }
 
 describe('LayoutPanel', () => {

@@ -10,6 +10,7 @@
  *   - 若为空 rooms 但有 walls：只显示 'perimeter' / 'grid'（用户需手输范围）
  */
 import { useMemo, useState } from 'react';
+import { useModelingStore } from '../../store/modelingStore.js';
 import { useProjectStore } from '../../store/projectStore.js';
 import { Panel } from './Panel.js';
 import {
@@ -23,7 +24,7 @@ import { makeFixture } from '../../core/makeFixture.js';
 import type { Fixture } from '../../core/types.js';
 
 export function LayoutPanel() {
-  const model = useProjectStore((s) => s.project.model);
+  const model = useModelingStore((s) => s.model);
   const ceilingH = useProjectStore((s) => s.project.ceilingH);
   const [roomIdx, setRoomIdx] = useState(0);
   const [cols, setCols] = useState(3);
