@@ -307,8 +307,9 @@ export const ENDPOINT_SNAP_RADIUS_M = 0.15;
 /**
  * 从候选集中吸附最近端点。
  *
- * 严格小于等于 `radiusM` 的候选中取最近的一个；无候选或全部超出半径返回 null。
- * 等距时取遍历到的第一个（保持结果稳定，便于测试）。
+ * 在距离**小于** `radiusM`（严格小于；边界处 `d == radiusM` 不吸附）的候选中
+ * 取最近的一个；无候选或全部超出半径返回 null。
+ * 等距时取遍历到的**第一个**（用严格 `<` 判定「更近」，保持结果稳定，便于测试）。
  */
 export function snapEndpoint(
   p: readonly [x: number, z: number],

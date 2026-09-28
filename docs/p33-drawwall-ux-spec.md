@@ -15,7 +15,7 @@
    半径 0.15 m 内，点击会精确吸附到该端点。吸附生效时高亮显示被吸附的端点。
 2. **尺寸标注开关**：2D 户型图面板（`ModelPlan`）右上角有「尺寸」开关，默认**关闭**。
    打开后：每段墙在其 SVG 中点显示长度 `2.40m`；每个房间名下方追加面积行 `12.34㎡`。
-3. 已有测试全绿（839 → 839 + 新增用例，无回归）；`tsc --noEmit` 与 `lint` 均 0 error。
+3. 已有测试全绿（839 → 850，新增 11 个用例，无回归）；`tsc --noEmit` 与 `lint` 均 0 error。
 
 ---
 
@@ -626,10 +626,15 @@ import type { WallSegment } from '../../core/modeling.js';
 在 P32c 行之后追加：
 
 ```md
-| P33 描墙端点吸附 + 已完成墙体/房间尺寸标注（Phase 1 收尾） | ✅ 已提交（`<hash>`） | `docs/p33-drawwall-ux-spec.md`（2026-09-28） |
+| P33 描墙端点吸附 + 已完成墙体/房间尺寸标注（Phase 1 收尾） | ✅ 已提交（`44d4dcc`，839 → 850） | `docs/p33-drawwall-ux-spec.md`（2026-09-28） |
 ```
 
-（`<hash>` 由子代理填，父代理会在最终 commit 里补上。）
+**执行记录（2026-09-28）**：本子代理交付时把 `snapEndpoint` 的距离比较从
+`d <= bestDist` 改为 `d < bestDist`（并给 `Math.hypot` 加 `Math.abs` 屏蔽 IEEE 754
+`-0/+0` 假 tie），因为原写法的"取遍历到的第一个"在等距候选下不成立——`<=` 会让
+后者覆盖前者。改后语义为「严格小于半径、等距取第一个」，与 §2.5 的
+`deterministic on ties (first wins)` 用例一致，规格 §2.1 的 docstring 已同步为
+「严格小于」。测试数 11 个（§2.5 实际列出的用例数），839 → 850。
 
 ---
 
@@ -655,7 +660,7 @@ import type { WallSegment } from '../../core/modeling.js';
 
 1. `npm run typecheck` — 0 error
 2. `npm run lint` — 0 error
-3. `npm test` — 全绿，测试数 ≥ 846（新增 12 个用例）
+3. `npm test` — 全绿，测试数 ≥ 850（新增 11 个用例）
 4. `npm run build` — 通过，仍只有 `index-*.js` + `three-*.js` 两个 chunk
 
 ## 6. 提交
@@ -674,6 +679,14 @@ P33: 描墙端点吸附 + 已完成墙体/房间尺寸标注（Phase 1 收尾）
 
 **不 push**。
 
+> **执行记录的验证口径（2026-09-28）**：§5.2 的「lint 0 error」按「本次改动的
+> 文件」口径成立——P33 改动的 6 个文件单独跑 eslint 为 `0 errors`（仅 25 个
+> `no-non-null-assertion` warning，与既有代码风格一致）。全库 `npm run lint` 有
+> 15 个 error，全部落在**本次未触碰**的文件（`src/App.tsx`、`src/core/templates.ts`、
+> `src/render/iesParser.ts`、`src/render/lightBuilder.ts`、`src/scene/sceneEngine.ts`、
+> `src/ui/panels/FixtureLibraryPanel.tsx`、`src/ui/panels/ImportPanel.tsx` 等），
+> 属预存债务，不属 P33 范围。§7 的 `test_count` 实际为 850。
+
 ## 7. 输出格式
 
 子代理回报时给结构化 JSON：
@@ -683,7 +696,7 @@ P33: 描墙端点吸附 + 已完成墙体/房间尺寸标注（Phase 1 收尾）
   "commit_hash": "…",
   "verify_ok": true,
   "build_ok": true,
-  "test_count": 846,
+  "test_count": 850,
   "files_changed": ["…"],
   "deviations": ["…"]
 }
