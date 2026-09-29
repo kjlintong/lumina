@@ -42,6 +42,8 @@ export function FloorPlan({ width = 220, height = 170 }: { width?: number; heigh
   const project = useProjectStore((s) => s.project);
   const selectedZoneKey = useProjectStore((s) => s.selectedZoneKey);
   const selectZone = useProjectStore((s) => s.selectZone);
+  // P36：灯具选中态（2D→3D 联动在 3D 侧已通，这里补上 2D 面板上的可视化）
+  const selectedFixtureId = useProjectStore((s) => s.selectedFixtureId);
 
   // 房间尺寸（与引擎默认一致）
   const room = { width: 6, depth: 4.5, height: 2.8 };
@@ -125,7 +127,18 @@ export function FloorPlan({ width = 220, height = 170 }: { width?: number; heigh
 
         {/* 灯具 */}
         {dots.map((d) => (
-          <text key={d.id} x={d.x} y={d.y} textAnchor="middle" fontSize={10} fill={dotColor(d.type)} className="floor-plan-fixture">
+          <text
+            key={d.id}
+            x={d.x}
+            y={d.y}
+            textAnchor="middle"
+            fontSize={10}
+            fill={selectedFixtureId === d.id ? '#f0a040' : dotColor(d.type)}
+            stroke={selectedFixtureId === d.id ? '#f0a040' : 'none'}
+            strokeWidth={selectedFixtureId === d.id ? 2 : 0}
+            className="floor-plan-fixture"
+            style={selectedFixtureId === d.id ? { filter: 'drop-shadow(0 0 3px #f0a040)' } : undefined}
+          >
             {dotSymbol(d.type)}
           </text>
         ))}

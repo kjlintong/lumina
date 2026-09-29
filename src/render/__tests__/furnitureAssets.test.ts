@@ -1,21 +1,24 @@
 /**
  * @vitest-environment jsdom
  *
- * P35 Part D：GLTF furniture loader 测试。
+ * P35 Part D + P36：GLTF furniture loader 测试。
  *
  * 覆盖：
  * - loadFurniture 加载失败（文件缺失）返回 null，不抛异常（降级策略）
  * - loadFurniture 成功路径写 cache：第二次同 key 调用不重新 loadAsync（缓存命中）
+ * - P36 manifest 驱动：manifest 缺 key → null；fetch 失败 → null；
+ *   manifest 单例缓存；_resetFurnitureCacheForTest 清 manifest 缓存；
+ *   loadAsync 收到 manifest 指定的 .gltf 路径
  * - snapToWall：obj 靠近墙时贴墙 + 对齐法线
  * - snapToWall：obj 远离墙（>threshold）时不动
  * - snapToWall：墙方向不同（沿 x 沿 z）时正确对齐
  *
- * GLTFLoader/DRACOLoader/KTX2Loader 通过 vi.mock 拦下，避免 jsdom 下真的走 fetch/parse。
+ * GLTFLoader/DRACOLoader 通过 vi.mock 拦下，fetch 用 vi.stubGlobal 拦下，
+ * 避免 jsdom 下真的走网络/parse。P36 起不再 import KTX2Loader（Poly Haven 用 JPG/PNG）。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import {
   FURNITURE_LIST,
@@ -28,17 +31,11 @@ vi.mock('three/addons/loaders/GLTFLoader.js', () => ({
   GLTFLoader: vi.fn().mockImplementation(() => ({
     loadAsync: vi.fn(),
     setDRACOLoader: vi.fn(),
-    setKTX2Loader: vi.fn(),
   })),
 }));
 vi.mock('three/addons/loaders/DRACOLoader.js', () => ({
   DRACOLoader: vi.fn().mockImplementation(() => ({
     setDecoderPath: vi.fn(),
-  })),
-}));
-vi.mock('three/addons/loaders/KTX2Loader.js', () => ({
-  KTX2Loader: vi.fn().mockImplementation(() => ({
-    detectSupport: vi.fn(),
   })),
 }));
 
@@ -59,17 +56,7 @@ function setGLTFLoadAsyncMock(mock: () => Promise<unknown>): void {
     () => ({
       loadAsync: mock,
       setDRACOLoader: vi.fn(),
-      setKTX2Loader: vi.fn(),
     }) as unknown as InstanceType<typeof GLTFLoader>,
-  );
-}
-
-/** 让 ensureLoader 使用的 KTX2Loader.detectSupport 变成 no-op mock */
-function stubKTX2DetectSupport(): void {
-  (KTX2Loader as unknown as { mockImplementation: (fn: unknown) => void }).mockImplementation(
-    () => ({
-      detectSupport: vi.fn(),
-    }),
   );
 }
 
@@ -80,6 +67,27 @@ function stubDracoDecoderPath(): void {
       setDecoderPath: vi.fn(),
     }),
   );
+}
+
+/**
+ * stub fetch 返回 loader-manifest.json 的内容（P36 manifest 驱动）。
+ * 默认登记 sofa/bed/table 三件（与 public/assets/furniture/loader-manifest.json 一致），
+ * chair/cabinet 缺失 → loader 应回落 null。
+ */
+function stubManifestFetch(): ReturnType<typeof vi.fn> {
+  const fetchMock = vi.fn(() =>
+    Promise.resolve({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          sofa: { zone: 'sofa', gltf: 'assets/furniture/sofa/ArmChair_01_1k.gltf' },
+          bed: { zone: 'bed', gltf: 'assets/furniture/bed/GothicBed_01_1k.gltf' },
+          table: { zone: 'table', gltf: 'assets/furniture/table/CoffeeTable_01_1k.gltf' },
+        }),
+    }),
+  );
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
 }
 
 /**
@@ -111,8 +119,9 @@ describe('loadFurniture', () => {
   beforeEach(() => {
     _resetFurnitureCacheForTest();
     vi.restoreAllMocks();
-    stubKTX2DetectSupport();
+    vi.unstubAllGlobals();
     stubDracoDecoderPath();
+    stubManifestFetch();
   });
 
   it('加载失败（文件缺失）返回 null，不抛异常', async () => {
@@ -135,6 +144,69 @@ describe('loadFurniture', () => {
     expect(r2).toBe(fakeScene);
     // loadAsync 只调用一次（第二次命中 cache）
     expect(loadAsyncSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('furnitureAssets (P36 manifest-driven)', () => {
+  beforeEach(() => {
+    _resetFurnitureCacheForTest();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    stubDracoDecoderPath();
+  });
+
+  it('loadFurniture returns null when manifest lacks the key', async () => {
+    stubManifestFetch(); // manifest 只登记 sofa/bed/table，无 chair
+    const loadAsyncSpy = vi.fn(() => Promise.resolve({ scene: unitCuboidGroup() }));
+    setGLTFLoadAsyncMock(loadAsyncSpy);
+
+    const result = await loadFurniture('chair', mockRenderer());
+    expect(result).toBeNull();
+    // manifest 缺 key → 直接回落，不应尝试 loadAsync
+    expect(loadAsyncSpy).not.toHaveBeenCalled();
+  });
+
+  it('loadFurniture falls back to null when manifest fetch fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network down'))));
+    const loadAsyncSpy = vi.fn(() => Promise.resolve({ scene: unitCuboidGroup() }));
+    setGLTFLoadAsyncMock(loadAsyncSpy);
+
+    const result = await loadFurniture('sofa', mockRenderer());
+    expect(result).toBeNull();
+    expect(loadAsyncSpy).not.toHaveBeenCalled();
+  });
+
+  it('loadFurniture caches manifest between calls', async () => {
+    const fetchMock = stubManifestFetch();
+    setGLTFLoadAsyncMock(vi.fn(() => Promise.resolve({ scene: unitCuboidGroup() })));
+
+    // 不同 key 各调一次（避免命中 assetCache），两次都应复用同一 manifest
+    await loadFurniture('sofa', mockRenderer());
+    await loadFurniture('bed', mockRenderer());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('_resetFurnitureCacheForTest clears manifest cache', async () => {
+    const fetchMock = stubManifestFetch();
+    setGLTFLoadAsyncMock(vi.fn(() => Promise.resolve({ scene: unitCuboidGroup() })));
+
+    await loadFurniture('sofa', mockRenderer());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    _resetFurnitureCacheForTest();
+
+    await loadFurniture('bed', mockRenderer());
+    // reset 后 manifest 缓存被清，需重新 fetch
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('loadAsync 收到 manifest 指定的 .gltf 绝对路径', async () => {
+    stubManifestFetch();
+    const loadAsyncSpy = vi.fn(() => Promise.resolve({ scene: unitCuboidGroup() }));
+    setGLTFLoadAsyncMock(loadAsyncSpy);
+
+    await loadFurniture('sofa', mockRenderer());
+    expect(loadAsyncSpy).toHaveBeenCalledWith('/assets/furniture/sofa/ArmChair_01_1k.gltf');
   });
 });
 

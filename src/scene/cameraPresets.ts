@@ -10,7 +10,7 @@
 
 /** 相机机位预设 */
 export interface CameraPreset {
-  key: 'window' | 'sofa' | 'dining' | 'overview';
+  key: 'window' | 'sofa' | 'dining' | 'overview' | 'plan';
   name: string;
   position: readonly [number, number, number];
   target: readonly [number, number, number];
@@ -61,6 +61,22 @@ export const CAMERA_PRESETS: readonly CameraPreset[] = [
     name: '全景位',
     position: [2.0, 2.2, 2.0],
     target: [0, 1.0, 0],
+  },
+  {
+    // 顶视（正交近似）：3D 视口垂直俯视房间，与 2D FloorPlan 视觉对齐。
+    // P36 · Phase 3 §3.3：3D 里能直接看到 2D 户型图的内容，选中态可跨视图同步。
+    //
+    // 坐标依据：room 尺寸 6×4.5×2.8（projectStore.ts:245 默认），房间中心 (0,0,0)。
+    // 相机放在正上方 z=0.001（防 lookAt 除零），target 是地面中心。
+    // fov=37° + distance=6m 时垂直视角覆盖约 3.6m 宽，正好铺满房间 4.5m 深边
+    // 的一半，配合 OrbitControls 缩放能铺满全景。
+    //
+    // **切到 plan 机位后，`sceneEngine.setCameraPreset` 调 `orbitControls.enableRotate = false`**
+    // ——见 sceneEngine.ts 修改项。
+    key: 'plan',
+    name: '顶视',
+    position: [0, 6, 0.001],
+    target: [0, 0, 0],
   },
 ];
 

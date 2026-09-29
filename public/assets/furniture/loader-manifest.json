@@ -1,0 +1,5 @@
+{
+  "sofa":  { "zone": "sofa",  "gltf": "assets/furniture/sofa/ArmChair_01_1k.gltf" },
+  "bed":   { "zone": "bed",   "gltf": "assets/furniture/bed/GothicBed_01_1k.gltf" },
+  "table": { "zone": "table", "gltf": "assets/furniture/table/CoffeeTable_01_1k.gltf" }
+}

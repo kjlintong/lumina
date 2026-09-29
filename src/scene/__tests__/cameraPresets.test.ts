@@ -13,11 +13,11 @@ import {
 } from '../cameraPresets.js';
 
 describe('CAMERA_PRESETS', () => {
-  it('4 个预设，key 不重复，name 非空', () => {
-    expect(CAMERA_PRESETS).toHaveLength(4);
+  it('5 个预设，key 不重复，name 非空', () => {
+    expect(CAMERA_PRESETS).toHaveLength(5);
     const keys = CAMERA_PRESETS.map((p) => p.key);
-    expect(new Set(keys).size).toBe(4);
-    expect(keys).toEqual(['window', 'sofa', 'dining', 'overview']);
+    expect(new Set(keys).size).toBe(5);
+    expect(keys).toEqual(['window', 'sofa', 'dining', 'overview', 'plan']);
     for (const p of CAMERA_PRESETS) {
       expect(p.name.length).toBeGreaterThan(0);
     }
@@ -25,6 +25,10 @@ describe('CAMERA_PRESETS', () => {
 
   it('所有 position 在房间 6×4.5×2.8m 内（x∈(-3,3), z∈(-2.25,2.25), y∈(0,2.8)）', () => {
     for (const p of CAMERA_PRESETS) {
+      // P36 例外：plan 顶视机位故意放在房间正上方（y=6 > 2.8），垂直俯视。
+      // 天花板是单面 PlaneGeometry（法线 -Y 朝室内，render/room.ts:301-304），
+      // 从上方看是背面被剔除，不会遮挡俯视视野。
+      if (p.key === 'plan') continue;
       const [px, py, pz] = p.position;
       // 严格不等号：相机必须在房间**内部**。四面墙是 BoxGeometry 全封闭体积，
       // 相机落在 x=±3 / z=±2.25 上就是贴着墙面，落在外面会被完全挡住
@@ -62,6 +66,29 @@ describe('CAMERA_PRESETS', () => {
     expect(cameraPresetByKey('nope')).toBeUndefined();
     expect(cameraPresetByKey('')).toBeUndefined();
     expect(cameraPresetByKey('SOFA')).toBeUndefined(); // key 大小写敏感
+  });
+});
+
+describe('cameraPresets (P36 plan preset)', () => {
+  it('plan preset exists with key=plan', () => {
+    const p = cameraPresetByKey('plan');
+    expect(p).toBeDefined();
+    expect(p!.key).toBe('plan');
+  });
+
+  it('plan preset is top-down (y=6, z≈0)', () => {
+    const p = cameraPresetByKey('plan')!;
+    expect(p.position[1]).toBeGreaterThan(3); // 高
+    expect(Math.abs(p.position[2])).toBeLessThan(0.01); // z 近 0（防 lookAt 除零）
+    expect(p.target).toEqual([0, 0, 0]);
+  });
+
+  it('plan preset is included in CAMERA_PRESETS array', () => {
+    expect(CAMERA_PRESETS.some((p) => p.key === 'plan')).toBe(true);
+  });
+
+  it('plan preset name is 顶视', () => {
+    expect(cameraPresetByKey('plan')!.name).toBe('顶视');
   });
 });
 

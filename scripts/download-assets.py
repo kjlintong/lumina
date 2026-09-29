@@ -59,8 +59,8 @@ FURNITURE_SLUGS = {
     "sofa": "ArmChair_01",          # 沙发（polyhaven 无独立 sofa，用 ArmChair 最接近）
     "bed": "GothicBed_01",          # 床
     "table": "CoffeeTable_01",      # 餐桌（用咖啡桌占位；polyhaven 桌类偏小）
-    "chair": "ArmChair_02",         # 餐椅
-    "cabinet": "GothicCabinet_01",  # 柜
+    "chair": "dining_chair_02",     # 餐椅（P36 修正：ArmChair_02 在 API 返回 Unknown id；dining_chair_02 是 polyhaven 真实餐椅）
+    "cabinet": "modern_wooden_cabinet",  # 柜（GothicCabinet_01 也存在但下载不稳；用 modern_wooden_cabinet 现代风格）
 }
 
 LIGHT_SLUGS = {

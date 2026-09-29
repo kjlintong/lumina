@@ -1786,6 +1786,12 @@ export class SceneEngine {
     const preset = cameraPresetByKey(presetKey);
     if (!preset) return;
 
+    // P36：顶视机位禁用 OrbitControls 的 Y 轴旋转，防止用户拖拽破坏俯视语义。
+    // enableRotate 只影响鼠标左键拖动，滚轮缩放和右键平移不受影响。
+    // 切回任一非 plan 机位时立刻恢复（避免顶视后切回窗景仍是锁定状态）。
+    const isPlan = preset.key === 'plan';
+    this.orbitControls.enableRotate = !isPlan;
+
     const fromPos: [number, number, number] = [
       this.camera.position.x,
       this.camera.position.y,
