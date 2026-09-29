@@ -8,8 +8,12 @@ import type { BloomSettings } from './render/postProcessing.js';
 import type { GodraysSettings } from './render/godrays.js';
 import { DEFAULT_GODRAYS } from './render/godrays.js';
 import { preloadIESFiles } from './render/iesCache.js';
-import { dropPosFromHit, mountFromNormal } from './render/mountFromNormal.js';
-import { snapFixturePos } from './render/snapToGrid.js';
+import { mountFromNormal } from './render/mountFromNormal.js';
+import {
+  FIXTURE_GRID_M,
+  projectToSurface,
+  surfaceSnap,
+} from './render/snapToGrid.js';
 import { LUMINA_FIXTURE_DND_MIME } from './ui/panels/FixtureLibraryPanel.js';
 import { serializeProject, deserializeProject } from './core/serialize.js';
 import { SceneEngine } from './scene/sceneEngine.js';
@@ -277,8 +281,14 @@ function handleDropFixture(
   const normal: readonly [number, number, number] = [face.normal.x, face.normal.y, face.normal.z];
   const point: readonly [number, number, number] = [hitUsed.point.x, hitUsed.point.y, hitUsed.point.z];
   const mount = mountFromNormal(normal);
-  const rawPos = dropPosFromHit(point, normal);
-  const snapped = snapFixturePos(rawPos);
+  // P37c：按 mount 类型贴到安装面（recessed 平齐，其他偏移 0.03m）
+  const rawPos = surfaceSnap(point, normal, mount);
+  // 水平方向仍走 50mm 网格吸附（Y 保持安装面位置，不再被网格化）
+  const snapped: readonly [number, number, number] = [
+    Math.round(rawPos[0] / FIXTURE_GRID_M) * FIXTURE_GRID_M,
+    rawPos[1],
+    Math.round(rawPos[2] / FIXTURE_GRID_M) * FIXTURE_GRID_M,
+  ];
   const id = useProjectStore.getState().addFixture({
     type: fixtureType as 'downlight' | 'spot' | 'pendant' | 'linear' | 'cove' | 'sconce' | 'floor' | 'table',
     mount,
@@ -673,9 +683,16 @@ export default function App() {
     const eng = engineRef.current;
     if (!eng) return;
     eng.setTransformCallback((fixtureId, newPos) => {
-      useProjectStore.getState().moveAndLockFixture(fixtureId, newPos);
-      useProjectStore.getState().setNotice(
-        `已移动 ${fixtureId.slice(0, 6)}… 到 (${newPos[0].toFixed(2)}, ${newPos[1].toFixed(2)}, ${newPos[2].toFixed(2)})`,
+      // P37c：把 pos 投影回原安装面（ceiling / floor / tabletop）；
+      // wall 类暂不处理（projectToSurface 对 wall 返回原 pos，见 spec §8）。
+      const st = useProjectStore.getState();
+      const fixture = st.project.fixtures[fixtureId];
+      if (!fixture) return;
+      const ceilingY = st.project.ceilingH ?? 2.8;
+      const snapped = projectToSurface(newPos, fixture.mount, ceilingY);
+      st.moveAndLockFixture(fixtureId, snapped);
+      st.setNotice(
+        `已移动 ${fixtureId.slice(0, 6)}… 到 (${snapped[0].toFixed(2)}, ${snapped[1].toFixed(2)}, ${snapped[2].toFixed(2)})`,
       );
     });
     return () => {

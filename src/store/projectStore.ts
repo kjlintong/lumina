@@ -202,9 +202,13 @@ export function createInitialProject(): LuminaProject {
   const lounge = makeZone('lounge', [-1.2, 0.8], { name: '客厅休闲区' });
   const dining = makeZone('dining', [1.4, -1.0], { name: '餐厅用餐区' });
 
-  const downlight = makeFixture({ type: 'downlight', pos: [-1.2, 2.7, 0.8], lumens: 500, cct: 2700 });
-  const pendant = makeFixture({ type: 'pendant', pos: [1.4, 1.9, -1.0], lumens: 800, cct: 3000 });
-  const floor = makeFixture({ type: 'floor', pos: [-2.4, 1.4, 1.4], lumens: 600, cct: 3000 });
+  // P37c：默认工程 3 盏灯 pos 严格贴合安装面（ceilingH=2.8）
+  const downlight = makeFixture({ type: 'downlight', pos: [-1.2, 2.8, 0.8], lumens: 500, cct: 2700 });
+  //   mount='recessed' → surfaceSnap 给 pos=[-1.2, 2.8, 0.8]（平齐天花板，offset=0）
+  const pendant = makeFixture({ type: 'pendant', pos: [1.4, 2.77, -1.0], lumens: 800, cct: 3000 });
+  //   mount='suspended' → surfaceSnap 给 pos=[1.4, 2.77, -1.0]（天花下方 0.03m）
+  const floor = makeFixture({ type: 'floor', pos: [-2.4, 0.03, 1.4], lumens: 600, cct: 3000 });
+  //   mount='floor' → surfaceSnap 给 pos=[-2.4, 0.03, 1.4]（地面上方 0.03m）
 
   const project: LuminaProject = {
     schemaVersion: 1,
