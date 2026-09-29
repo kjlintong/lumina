@@ -103,6 +103,7 @@ P8 六阶段全部完成，测试 310 → 435 条。时间轴经用户验收改�
 | P35 Phase 2 资产与调色（GradePass 6 参数后置 Pass + HDRLoader + GLTF/DRACO/KTX2 家具加载器 + RoomEnvironment/程序化家具降级回落 + sceneController grade easeInOut 插值 + preset grade 映射） | ✅ 已提交（`ab5d6d5`，907 → 930） | `docs/p35-execution-spec.md`（2026-09-28） |
 | P36 Phase 3 §3.3 双视图联动（顶视机位 + OrbitControls 顶视锁定 + 2D/3D 选中态同步 + 家具 `.gltf` loader manifest 驱动升级） | ✅ 已提交（`5b35a2d`，930 → 942） | `docs/P36-spec.md`（2026-09-29） |
 | P37a Phase 2 灯具资产管线（灯具 GLTF manifest loader + `normalizeAndAnchor` 主轴向归一化 + `attachGlowMesh` 外挂发光面 + `sceneEngine.loadFixtureAssetAsync` attempt-token 替换 + loader-manifest.json + 下载脚本补 manifest 生成） | ✅ 已提交（`b559aa6` + 修复 commit，942 → 954） | `docs/P37-spec.md`（2026-09-29） |
+| P37a-fix 视觉修复（`normalizeAndAnchor` 平移量算法改对——原假设资产顶点关于原点居中，实际不对称；新增 `findEmissiveMeshes` 复用资产自带 emissive 网格当发光面，不再外挂合成圆片；`targetSize` 按真实几何重定值） | ✅ 已提交（`d5fb660`，954 → 956） | `docs/P37-fix-spec.md`（2026-09-29） |
 
 ### Phase 0 止血（源自 `Lumina项目审查与后续工作方案.md` §二）
 
