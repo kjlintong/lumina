@@ -249,7 +249,8 @@ def download_model(slug: str, dest_dir: Path, resolution: str = "1k",
 
 
 def download_models(slug_map: dict, dest_dir: Path, category: str,
-                    resolution: str = "1k", skip_existing: bool = False) -> None:
+                    resolution: str = "1k", skip_existing: bool = False,
+                    category_dir_name: str | None = None) -> None:
     dest_dir.mkdir(parents=True, exist_ok=True)
     manifest = {}
     for target_name, slug in slug_map.items():
@@ -262,6 +263,25 @@ def download_models(slug_map: dict, dest_dir: Path, category: str,
     manifest_path = dest_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
     print(f"  [manifest] {manifest_path}")
+
+    # P37：额外生成 loader-manifest.json（loader 读的绝对路径版本）
+    # 家具目录已有手写的 loader-manifest.json（P36），本脚本重写以保证一致性。
+    # 灯具目录 P37 首次引入。
+    loader_manifest = {}
+    for target_name, slug in slug_map.items():
+        sub_dir = dest_dir / target_name
+        # 找该子目录下的 .gltf 文件
+        gltf_files = list(sub_dir.glob('*.gltf'))
+        if gltf_files:
+            gltf_name = gltf_files[0].name
+            rel_path = str((PUBLIC / (category_dir_name or dest_dir.name) / target_name / gltf_name).relative_to(REPO_ROOT / 'public'))
+            loader_manifest[target_name] = {
+                "asset": target_name,
+                "gltf": rel_path,
+            }
+    loader_manifest_path = dest_dir / "loader-manifest.json"
+    loader_manifest_path.write_text(json.dumps(loader_manifest, indent=2, ensure_ascii=False))
+    print(f"  [loader-manifest] {loader_manifest_path}")
 
 
 def main() -> int:
@@ -289,13 +309,15 @@ def main() -> int:
     if do_furn:
         print(f"[2/3] 家具（{args.resolution}）")
         download_models(FURNITURE_SLUGS, PUBLIC / "furniture", "家具",
-                        resolution=args.resolution, skip_existing=args.skip_existing)
+                        resolution=args.resolution, skip_existing=args.skip_existing,
+                        category_dir_name="furniture")
         print()
 
     if do_lights:
         print(f"[3/3] 灯具（{args.resolution}）")
         download_models(LIGHT_SLUGS, PUBLIC / "lights", "灯具",
-                        resolution=args.resolution, skip_existing=args.skip_existing)
+                        resolution=args.resolution, skip_existing=args.skip_existing,
+                        category_dir_name="lights")
         print()
 
     print("完成。")

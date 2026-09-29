@@ -101,7 +101,8 @@ P8 六阶段全部完成，测试 310 → 435 条。时间轴经用户验收改�
 | P34d 照度伪彩预览（`luminanceGrid` CPU 采样 0.4m 步长 + Gamma 0.6 色标，复用 `fixtureContribution`） | ✅ 已提交（`159ed60`，850 → 862） | `docs/p34-phase3-spec.md` §6（2026-09-28） |
 | P34a Part A+B 收尾（`lightBudget.ts` + `layout.ts` + `lightBuilder` proxy + `sceneEngine.recalculateBudget/syncFixtures` + `LayoutPanel.tsx` + `projectStore.addFixtures`，含 eslint `--fix` 清理 4 个数组类型 lint error） | ✅ 已提交（见下，测试 850 → 907） | `docs/p34-phase3-spec.md` §3-§4（2026-09-28） |
 | P35 Phase 2 资产与调色（GradePass 6 参数后置 Pass + HDRLoader + GLTF/DRACO/KTX2 家具加载器 + RoomEnvironment/程序化家具降级回落 + sceneController grade easeInOut 插值 + preset grade 映射） | ✅ 已提交（`ab5d6d5`，907 → 930） | `docs/p35-execution-spec.md`（2026-09-28） |
-| P36 Phase 3 §3.3 双视图联动（顶视机位 + OrbitControls 顶视锁定 + 2D/3D 选中态同步 + 家具 `.gltf` loader manifest 驱动升级） | ✅ 已提交（`<commit>`，930 → 942） | `docs/P36-spec.md`（2026-09-29） |
+| P36 Phase 3 §3.3 双视图联动（顶视机位 + OrbitControls 顶视锁定 + 2D/3D 选中态同步 + 家具 `.gltf` loader manifest 驱动升级） | ✅ 已提交（`5b35a2d`，930 → 942） | `docs/P36-spec.md`（2026-09-29） |
+| P37a Phase 2 灯具资产管线（灯具 GLTF manifest loader + `normalizeAndAnchor` 主轴向归一化 + `attachGlowMesh` 外挂发光面 + `sceneEngine.loadFixtureAssetAsync` attempt-token 替换 + loader-manifest.json + 下载脚本补 manifest 生成） | ✅ 已提交（`<commit>`，942 → 951） | `docs/P37-spec.md`（2026-09-29） |
 
 ### Phase 0 止血（源自 `Lumina项目审查与后续工作方案.md` §二）
 

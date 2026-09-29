@@ -72,6 +72,7 @@ import { loadHdri, pickHdriBySunElevation } from '../render/hdriLoader.js';
 import type { HDRIKey } from '../render/hdriLoader.js';
 import { loadFurniture } from '../render/furnitureAssets.js';
 import type { FurnitureKey } from '../render/furnitureAssets.js';
+import { assetKeyForType, loadLightAsset, LIGHT_ASSET_DEFS, attachGlowMesh } from '../render/lightAssets.js';
 import { solarColor, solarPosition } from './solar.js';
 import { cameraPresetByKey, easeInOutQuad, lerp } from './cameraPresets.js';
 
@@ -146,6 +147,26 @@ interface FixtureLightEntry {
 /** 亮度截断到 [0, 1] */
 function clamp01(v: number): number {
   return Math.min(1, Math.max(0, v));
+}
+
+/**
+ * P37a：遍历 obj 子树，把所有 Mesh 的 castShadow / receiveShadow 设为 false。
+ *
+ * GLTF 资产的 Mesh 默认按模型里的标记设（可能为 true），但灯具是**光源的
+ * 可视化替身**，让资产投阴影会把自家光源照成黑斑（与 `lightBuilder.ts:466-468`
+ * 对程序化灯罩的处理同规）。
+ *
+ * 私有函数，不导出：只有 sceneEngine 用，避免跨文件循环依赖（lightBuilder
+ * 已经 import 到 sceneEngine 顶部，再反向导出工具函数会绕）。
+ */
+function markNoShadow(obj: Object3D): void {
+  obj.traverse((o) => {
+    if ((o as Mesh).isMesh) {
+      const m = o as Mesh;
+      m.castShadow = false;
+      m.receiveShadow = false;
+    }
+  });
 }
 
 /**
@@ -263,6 +284,17 @@ export class SceneEngine {
    * sceneLevels 是**数据模型**（场景目标，applyScene 时一次性落盘）。
    */
   private fixtureLevels = new Map<string, number>();
+
+  /**
+   * P37a：灯具 GLTF 资产异步加载的 attempt token。
+   * 语义与 `zoneAssets`（:1080 loadZoneAssetAsync）平行：每次
+   * `addFixtureInternal` 调用时该 id 的 attempt 递增；异步完成后 attempt
+   * 不匹配就丢弃结果。
+   *
+   * 只存 attempt 数字（不存 fallback / entry 引用）—— entry 通过
+   * `fixtureLights.get(id)` 现查，避免缓存失效。
+   */
+  private fixtureAssetStates: Map<string, number> = new Map();
 
   /**
    * 当前激活的场景 key（由 sceneController / App 在场景切换时同步过来）。
@@ -913,6 +945,11 @@ export class SceneEngine {
     const level = this.resolveLevel(fixture);
     this.fixtureLevels.set(fixture.id, level);
     this.applyFixtureIntensity(fixture.id, level);
+    // P37a：启动异步资产加载（若该类型有资产）。加载完成后替换程序化几何。
+    // 不阻塞 addFixtureInternal 的同步返回 —— entry.shade 立刻是程序化 shade，
+    // applyFixtureIntensity 等能立刻工作；资产到位后 entry.shade 被替换为
+    // 资产 Group 里的新 glow Mesh。
+    this.loadFixtureAssetAsync(fixture, object);
   }
 
   /** 根据预算决定 buildLightFromFixture 的 opts */
@@ -948,6 +985,7 @@ export class SceneEngine {
       this.scene.remove(entry.object);
       this.fixtureLights.delete(fixtureId);
       this.fixtureLevels.delete(fixtureId);
+      this.fixtureAssetStates.delete(fixtureId); // P37a：防残留 attempt
     }
   }
 
@@ -1104,6 +1142,106 @@ export class SceneEngine {
     } catch {
       // loadFurniture 内部已 try/catch，此处再兜一次极端异常
     }
+  }
+
+  /**
+   * P37a：异步加载灯具 GLTF 资产并替换程序化几何。
+   *
+   * 失败静默（不 log error；lightAssets 内部已 console.warn）。
+   * 加载成功后：
+   *   1. 从 entry.object 里移除原程序化 Group（`buildFixtureModel` 返回的
+   *      group，是 object 里那个 Group 类型子节点；光本身是 Light /
+   *      SpotLight / RectAreaLight / PointLight，类型不同）
+   *   2. 加载 GLTF 资产，clone(true) 后挂到 entry.object
+   *   3. markNoShadow 遍历资产 Mesh 设 castShadow=false / receiveShadow=false
+   *   4. attachGlowMesh 挂发光面（带 `-shade` 后缀，见 App.tsx:256 拖放命中判定）
+   *   5. 更新 entry.shade
+   *   6. 重新调 applyFixtureIntensity 让新 shade 立刻反映当前 level
+   *   7. 若灯具当前被选中（TransformControls 挂接），重新 attach
+   *
+   * **attempt token 防 stale**（照抄 loadZoneAssetAsync 的 3 层检查）：
+   * 删除灯具 → 重建同 id 灯具（recalculateBudget:989 触发）的场景下，旧异步
+   * 结果到达时 attempt 已不匹配，静默丢弃。
+   *
+   * **幂等**：若 object 里已经有本次 assetKey 的 Group（例如预算切换前后
+   * 两次调用），跳过替换，避免重复 clone。
+   *
+   * 注意 `curEntry.object !== object` 的判断 —— 预算重建时 entry 会换成新
+   * entry（新 object），旧 entry 的异步结果必须丢弃，否则会挂到已废弃的
+   * object 上（object 已不在 scene 里，但 entry 还在 map 里直到下一次
+   * recalculateBudget 才清理）。
+   */
+  private loadFixtureAssetAsync(
+    fixture: Fixture,
+    object: Object3D,
+  ): void {
+    const assetKey = assetKeyForType(fixture.type);
+    if (!assetKey) return; // 无资产类型（spot / linear / cove / floor）直接走程序化
+
+    const def = LIGHT_ASSET_DEFS[assetKey];
+    const attempt = (this.fixtureAssetStates.get(fixture.id) ?? 0) + 1;
+    this.fixtureAssetStates.set(fixture.id, attempt);
+
+    void (async () => {
+      // 与 loadZoneAssetAsync 同款 renderer 检查
+      const renderer = this.backend.type === 'webgl2' ? this.backend.getRenderer() : null;
+      if (!renderer) return;
+
+      let asset: Group | null = null;
+      try {
+        asset = await loadLightAsset(assetKey, renderer);
+      } catch {
+        return;
+      }
+      if (!asset) return; // loadLightAsset 内部已经 console.warn，这里静默返回
+
+      // token 检查（照抄 loadZoneAssetAsync 的 3 层检查）
+      if (this.fixtureAssetStates.get(fixture.id) !== attempt) return;
+      if (!this.fixtureLights.has(fixture.id)) return;
+      const curEntry = this.fixtureLights.get(fixture.id);
+      if (!curEntry || curEntry.object !== object) return;
+
+      // 幂等检查：若 object 里已有本 assetKey 的 Group，跳过（预算切换不会重建
+      // 同一 fixture 到全新 object，但保险起见）
+      const alreadyTagged = object.children.some(
+        (c) => c.userData.p37AssetKey === assetKey,
+      );
+      if (alreadyTagged) return;
+
+      // clone 资产（缓存里的是归一化后的原 Group，不能同时挂到多处；three.js
+      // clone(true) 会复制 geometry/material 引用但不共享场景图节点，安全）
+      const assetClone = asset.clone(true);
+      markNoShadow(assetClone);
+      assetClone.userData.p37AssetKey = assetKey;
+
+      // 移除原程序化 group（object.children 里所有 Group 类型子节点；光本身是
+      // Light 子类，instanceof THREE.Group 会过滤掉）
+      for (const child of [...object.children]) {
+        if (child instanceof Group) {
+          object.remove(child);
+        }
+      }
+
+      // 把 assetClone 放到原程序化 group 的位置（origin，因为 buildLightFromFixture
+      // 里 modelGroup.position.set(0, 0, 0)），并沿用 rot
+      assetClone.position.set(0, 0, 0);
+      assetClone.rotation.set(fixture.rot.pitch, fixture.rot.yaw, 0);
+      object.add(assetClone);
+
+      // 挂发光面，更新 entry.shade
+      const newShade = attachGlowMesh(fixture, assetClone, def);
+      curEntry.shade = newShade;
+
+      // 立刻应用当前 level 让发光面对
+      const level = this.fixtureLevels.get(fixture.id) ?? 1;
+      this.applyFixtureIntensity(fixture.id, level);
+
+      // 若当前灯具被选中（TransformControls 挂接），重新挂到 gizmo 上
+      if (this.attachedFixtureId === fixture.id && this.transformControls) {
+        this.transformControls.detach();
+        this.transformControls.attach(object);
+      }
+    })();
   }
 
   /** 移除活动区（可视化与家具一并移除） */

@@ -1,0 +1,7 @@
+{
+  "pendant":      { "asset": "pendant",      "gltf": "assets/lights/pendant/hanging_industrial_lamp_1k.gltf" },
+  "chandelier":   { "asset": "chandelier",   "gltf": "assets/lights/chandelier/Chandelier_01_1k.gltf" },
+  "desk_lamp":    { "asset": "desk_lamp",    "gltf": "assets/lights/desk_lamp/desk_lamp_arm_01_1k.gltf" },
+  "wall_sconce":  { "asset": "wall_sconce",  "gltf": "assets/lights/wall_sconce/industrial_wall_sconce_1k.gltf" },
+  "ceiling_lamp": { "asset": "ceiling_lamp", "gltf": "assets/lights/ceiling_lamp/modern_ceiling_lamp_01_1k.gltf" }
+}
