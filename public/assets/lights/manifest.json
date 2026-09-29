@@ -1,0 +1,72 @@
+{
+  "chandelier": {
+    "slug": "Chandelier_01",
+    "gltf": "Chandelier_01_1k.gltf",
+    "files": [
+      "Chandelier_01.bin",
+      "Chandelier_01_1k.gltf",
+      "textures/Chandelier_01_arm_1k.jpg",
+      "textures/Chandelier_01_diff_1k.jpg",
+      "textures/Chandelier_01_metallic_1k.jpg",
+      "textures/Chandelier_01_nor_dx_1k.jpg",
+      "textures/Chandelier_01_nor_gl_1k.jpg",
+      "textures/Chandelier_01_roughness_1k.jpg"
+    ]
+  },
+  "desk_lamp": {
+    "slug": "desk_lamp_arm_01",
+    "gltf": "desk_lamp_arm_01_1k.gltf",
+    "files": [
+      "desk_lamp_arm_01.bin",
+      "desk_lamp_arm_01_1k.gltf",
+      "textures/desk_lamp_arm_01_arm_1k.jpg",
+      "textures/desk_lamp_arm_01_diff_1k.jpg",
+      "textures/desk_lamp_arm_01_metal_1k.jpg",
+      "textures/desk_lamp_arm_01_nor_dx_1k.jpg",
+      "textures/desk_lamp_arm_01_nor_gl_1k.jpg",
+      "textures/desk_lamp_arm_01_rough_1k.jpg"
+    ]
+  },
+  "wall_sconce": {
+    "slug": "industrial_wall_sconce",
+    "gltf": "industrial_wall_sconce_1k.gltf",
+    "files": [
+      "industrial_wall_sconce.bin",
+      "industrial_wall_sconce_1k.gltf",
+      "textures/industrial_wall_sconce_arm_1k.jpg",
+      "textures/industrial_wall_sconce_diff_1k.jpg",
+      "textures/industrial_wall_sconce_metal_1k.jpg",
+      "textures/industrial_wall_sconce_nor_dx_1k.jpg",
+      "textures/industrial_wall_sconce_nor_gl_1k.jpg",
+      "textures/industrial_wall_sconce_rough_1k.jpg"
+    ]
+  },
+  "ceiling_lamp": {
+    "slug": "modern_ceiling_lamp_01",
+    "gltf": "modern_ceiling_lamp_01_1k.gltf",
+    "files": [
+      "modern_ceiling_lamp_01.bin",
+      "modern_ceiling_lamp_01_1k.gltf",
+      "textures/modern_ceiling_lamp_01_arm_1k.jpg",
+      "textures/modern_ceiling_lamp_01_diff_1k.jpg",
+      "textures/modern_ceiling_lamp_01_metal_1k.jpg",
+      "textures/modern_ceiling_lamp_01_nor_dx_1k.jpg",
+      "textures/modern_ceiling_lamp_01_nor_gl_1k.jpg",
+      "textures/modern_ceiling_lamp_01_rough_1k.jpg"
+    ]
+  },
+  "pendant": {
+    "slug": "hanging_industrial_lamp",
+    "gltf": "hanging_industrial_lamp_1k.gltf",
+    "files": [
+      "hanging_industrial_lamp.bin",
+      "hanging_industrial_lamp_1k.gltf",
+      "textures/hanging_industrial_lamp_arm_1k.jpg",
+      "textures/hanging_industrial_lamp_diff_1k.jpg",
+      "textures/hanging_industrial_lamp_metal_1k.jpg",
+      "textures/hanging_industrial_lamp_nor_dx_1k.jpg",
+      "textures/hanging_industrial_lamp_nor_gl_1k.jpg",
+      "textures/hanging_industrial_lamp_rough_1k.jpg"
+    ]
+  }
+}

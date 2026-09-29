@@ -1,5 +1,7 @@
 {
-  "sofa":  { "zone": "sofa",  "gltf": "assets/furniture/sofa/ArmChair_01_1k.gltf" },
-  "bed":   { "zone": "bed",   "gltf": "assets/furniture/bed/GothicBed_01_1k.gltf" },
-  "table": { "zone": "table", "gltf": "assets/furniture/table/CoffeeTable_01_1k.gltf" }
+  "sofa":    { "zone": "sofa",  "gltf": "assets/furniture/sofa/ArmChair_01_1k.gltf" },
+  "bed":     { "zone": "bed",   "gltf": "assets/furniture/bed/GothicBed_01_1k.gltf" },
+  "table":   { "zone": "table", "gltf": "assets/furniture/table/CoffeeTable_01_1k.gltf" },
+  "chair":   { "zone": "chair", "gltf": "assets/furniture/chair/dining_chair_02_1k.gltf" },
+  "cabinet": { "zone": "cabinet", "gltf": "assets/furniture/cabinet/modern_wooden_cabinet_1k.gltf" }
 }

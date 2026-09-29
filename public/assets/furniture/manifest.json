@@ -1,0 +1,71 @@
+{
+  "sofa": {
+    "slug": "ArmChair_01",
+    "gltf": "ArmChair_01_1k.gltf",
+    "files": [
+      "ArmChair_01.bin",
+      "ArmChair_01_1k.gltf",
+      "textures/Armchair_01_arm_1k.jpg",
+      "textures/Armchair_01_diff_1k.jpg",
+      "textures/Armchair_01_metallic_1k.jpg",
+      "textures/Armchair_01_nor_dx_1k.jpg",
+      "textures/Armchair_01_nor_gl_1k.jpg",
+      "textures/Armchair_01_roughness_1k.jpg"
+    ]
+  },
+  "bed": {
+    "slug": "GothicBed_01",
+    "gltf": "GothicBed_01_1k.gltf",
+    "files": [
+      "GothicBed_01.bin",
+      "GothicBed_01_1k.gltf",
+      "textures/GothicBed_01_arm_1k.jpg",
+      "textures/GothicBed_01_diff_1k.jpg",
+      "textures/GothicBed_01_metallic_1k.jpg",
+      "textures/GothicBed_01_nor_dx_1k.jpg",
+      "textures/GothicBed_01_nor_gl_1k.jpg",
+      "textures/GothicBed_01_roughness_1k.jpg"
+    ]
+  },
+  "table": {
+    "slug": "CoffeeTable_01",
+    "gltf": "CoffeeTable_01_1k.gltf",
+    "files": [
+      "CoffeeTable_01.bin",
+      "CoffeeTable_01_1k.gltf",
+      "textures/CoffeeTable_01_arm_1k.jpg",
+      "textures/CoffeeTable_01_diff_1k.jpg",
+      "textures/CoffeeTable_01_metallic_1k.jpg",
+      "textures/CoffeeTable_01_nor_dx_1k.jpg",
+      "textures/CoffeeTable_01_nor_gl_1k.jpg",
+      "textures/CoffeeTable_01_roughness_1k.jpg"
+    ]
+  },
+  "chair": {
+    "slug": "dining_chair_02",
+    "gltf": "dining_chair_02_1k.gltf",
+    "files": [
+      "dining_chair_02.bin",
+      "dining_chair_02_1k.gltf",
+      "textures/dining_chair_02_arm_1k.jpg",
+      "textures/dining_chair_02_diff_1k.jpg",
+      "textures/dining_chair_02_metal_1k.jpg",
+      "textures/dining_chair_02_nor_dx_1k.jpg",
+      "textures/dining_chair_02_nor_gl_1k.jpg",
+      "textures/dining_chair_02_rough_1k.jpg"
+    ]
+  },
+  "cabinet": {
+    "slug": "modern_wooden_cabinet",
+    "gltf": "modern_wooden_cabinet_1k.gltf",
+    "files": [
+      "modern_wooden_cabinet.bin",
+      "modern_wooden_cabinet_1k.gltf",
+      "textures/modern_wooden_cabinet_arm_1k.jpg",
+      "textures/modern_wooden_cabinet_diff_1k.jpg",
+      "textures/modern_wooden_cabinet_nor_dx_1k.jpg",
+      "textures/modern_wooden_cabinet_nor_gl_1k.jpg",
+      "textures/modern_wooden_cabinet_rough_1k.jpg"
+    ]
+  }
+}
