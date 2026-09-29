@@ -1042,10 +1042,15 @@ export class SceneEngine {
     const group = new Group();
     group.name = `zone:${zone.key}`;
     group.add(buildActivityZone(zone, selected));
+    // 先注册 zoneObjects，再触发异步家具替换：
+    // appendFurnitureToZone 内部 fire `void replaceZoneFurniture(...)` 异步任务，
+    // 该方法第一行检查 `this.zoneObjects.get(zone.key) !== group` 作为 token 保护。
+    // 若 set 在 append 之后，async 任务首步检查必失败 → GLTF 永不替换，只保留
+    // procedural fallback（P35 就存在的 bug，P36 排查时确证）。
+    this.zoneObjects.set(zone.key, group);
+    this.scene.add(group);
     // P35：GLTF 家具优先；同步 fallback 到程序化 buildFurniture（视觉无退化）
     this.appendFurnitureToZone(zone, group);
-    this.scene.add(group);
-    this.zoneObjects.set(zone.key, group);
   }
 
   /**

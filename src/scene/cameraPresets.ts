@@ -68,14 +68,16 @@ export const CAMERA_PRESETS: readonly CameraPreset[] = [
     //
     // 坐标依据：room 尺寸 6×4.5×2.8（projectStore.ts:245 默认），房间中心 (0,0,0)。
     // 相机放在正上方 z=0.001（防 lookAt 除零），target 是地面中心。
-    // fov=37° + distance=6m 时垂直视角覆盖约 3.6m 宽，正好铺满房间 4.5m 深边
-    // 的一半，配合 OrbitControls 缩放能铺满全景。
+    //
+    // 高度选 12m：fov=37° + distance=12m → 垂直半高 atan(18.5°) × 12 ≈ 4.0m，
+    // 垂直视锥覆盖 8m，正好把 4.5m 深边整个包进去；水平按 aspect 1.71 算约 13.7m，
+    // 覆盖 6m 长边还有富余。原 6m 距离只能看到 2×2m，房间大部分在视野外。
     //
     // **切到 plan 机位后，`sceneEngine.setCameraPreset` 调 `orbitControls.enableRotate = false`**
     // ——见 sceneEngine.ts 修改项。
     key: 'plan',
     name: '顶视',
-    position: [0, 6, 0.001],
+    position: [0, 12, 0.001],
     target: [0, 0, 0],
   },
 ];
