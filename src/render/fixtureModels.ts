@@ -264,6 +264,23 @@ export function buildTableModel(d: number, mat: ShadeMaterial): FixtureModelResu
   return { group, shade, type: 'table' };
 }
 
+/** 吊灯组：多臂球形对称（挂天花）。简化为一个大球体（发光体）+ 顶部吊杆。
+ *  与资产 chandelier（实测 x≈y≈z 三轴对称）视觉一致。 */
+function buildChandelierModel(d: number, mat: ShadeMaterial): FixtureModelResult {
+  const group = new Group();
+  const r = Math.max(0.1, d / 2) * S;
+  // 主发光球体（shade 是发光体，供 sceneEngine 选中高亮时更新 emissive）
+  const shadeGeo = new SphereGeometry(r, 24, 16);
+  const shade = new Mesh(shadeGeo, makeGlowMaterial(mat));
+  group.add(shade);
+  // 顶部吊杆（连接天花，黑色金属壳）
+  const rodGeo = new CylinderGeometry(0.005, 0.005, 0.1, 8);
+  const rod = new Mesh(rodGeo, makeShellMaterial());
+  rod.position.y = r + 0.05;
+  group.add(rod);
+  return { group, shade, type: 'chandelier' };
+}
+
 // ---------------------------------------------------------------------------
 // 分发
 // ---------------------------------------------------------------------------
@@ -290,6 +307,8 @@ export function buildFixtureModel(f: Fixture): FixtureModelResult {
       return buildFloorModel(f.shape.diameter, f.shape.shade);
     case 'table':
       return buildTableModel(f.shape.diameter, f.shape.shade);
+    case 'chandelier':  // P37d：程序化回退（资产加载失败时）
+      return buildChandelierModel(f.shape.diameter, f.shape.shade);
     default:
       return buildPendantModel(f.shape.diameter, f.shape.shade);
   }

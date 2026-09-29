@@ -16,20 +16,20 @@ beforeEach(() => {
 });
 
 describe('FixtureLibraryPanel', () => {
-  it('渲染 8 种灯具，各有 draggable 与 data-fixture-type', () => {
+  it('渲染 9 种灯具，各有 draggable 与 data-fixture-type', () => {
     const { container } = render(<FixtureLibraryPanel />);
     const items = container.querySelectorAll('.fixture-library-item');
-    expect(items.length).toBe(8);
+    expect(items.length).toBe(9);
     for (const item of items) {
       expect(item.getAttribute('draggable')).toBe('true');
       expect(item.getAttribute('data-fixture-type')).toBeTruthy();
     }
   });
 
-  it('包含 8 个中文标签', () => {
+  it('包含 9 个中文标签', () => {
     const { container } = render(<FixtureLibraryPanel />);
     const text = container.textContent ?? '';
-    for (const label of ['筒灯', '射灯', '吊灯', '线条灯', '灯带', '壁灯', '落地灯', '台灯']) {
+    for (const label of ['筒灯', '射灯', '吊灯', '线条灯', '灯带', '壁灯', '落地灯', '台灯', '吊灯组']) {
       expect(text).toContain(label);
     }
   });
@@ -50,11 +50,11 @@ describe('FixtureLibraryPanel', () => {
     }
   });
 
-  it('每个 item 有唯一的 data-fixture-type（8 种无重复）', () => {
+  it('每个 item 有唯一的 data-fixture-type（9 种无重复）', () => {
     const { container } = render(<FixtureLibraryPanel />);
     const items = Array.from(container.querySelectorAll('.fixture-library-item'));
     const types = items.map((el) => el.getAttribute('data-fixture-type'));
-    expect(new Set(types).size).toBe(8);
+    expect(new Set(types).size).toBe(9);
     expect(types).toContain('downlight');
     expect(types).toContain('spot');
     expect(types).toContain('pendant');
@@ -63,5 +63,6 @@ describe('FixtureLibraryPanel', () => {
     expect(types).toContain('sconce');
     expect(types).toContain('floor');
     expect(types).toContain('table');
+    expect(types).toContain('chandelier');
   });
 });

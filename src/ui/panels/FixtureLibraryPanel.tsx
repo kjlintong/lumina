@@ -59,6 +59,23 @@ const LIBRARY: ReadonlyArray<{
     ),
   },
   {
+    type: 'chandelier',
+    label: '吊灯组',
+    hint: '多臂球形对称',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <circle cx="12" cy="4" r="1.5" fill="currentColor" />
+        <line x1="12" y1="5.5" x2="12" y2="9" />
+        <line x1="12" y1="9" x2="6" y2="14" />
+        <line x1="12" y1="9" x2="18" y2="14" />
+        <line x1="12" y1="9" x2="12" y2="16" />
+        <circle cx="6" cy="15.5" r="2" />
+        <circle cx="18" cy="15.5" r="2" />
+        <circle cx="12" cy="17.5" r="2" />
+      </svg>
+    ),
+  },
+  {
     type: 'linear',
     label: '线条灯',
     hint: '线性连续',

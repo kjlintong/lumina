@@ -52,6 +52,7 @@ function lightKind(f: Fixture): 'spot_shadow' | 'spot_noshadow' | 'point' | 'rec
     case 'sconce':
     case 'floor':
     case 'table':
+    case 'chandelier':  // P37d：多臂球形吊灯，PointLight 无 shadow
       return 'point';            // PointLight，无 shadow
     case 'linear':
     case 'cove':

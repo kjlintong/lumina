@@ -38,6 +38,7 @@ const ALL_TYPES: FixtureType[] = [
   'sconce',
   'floor',
   'table',
+  'chandelier',  // P37d
 ];
 
 /** 测试用的期望目标表（照搬规格 §5.1 presetTarget 逻辑） */
@@ -51,6 +52,7 @@ const EXPECTED: Record<PresetId, Record<FixtureType, { level: number; cct: CCTVa
     sconce: { level: 0.7, cct: 3200 },
     floor: { level: 0.7, cct: 3200 },
     table: { level: 1.0, cct: 3500 },
+    chandelier: { level: 1.0, cct: 3500 },  // P37d：主灯级，与 pendant 一致
   },
   cinema: {
     downlight: { level: 0, cct: 2700 },
@@ -61,6 +63,7 @@ const EXPECTED: Record<PresetId, Record<FixtureType, { level: number; cct: CCTVa
     sconce: { level: 0.3, cct: 2400 },
     floor: { level: 0.3, cct: 2400 },
     table: { level: 0.3, cct: 2400 },
+    chandelier: { level: 0.3, cct: 2400 },  // P37d：presetTarget 未列入"主灯"分支，落到 cinema ambient 30%
   },
   reading: {
     downlight: { level: 0.1, cct: 2700 },
@@ -71,6 +74,7 @@ const EXPECTED: Record<PresetId, Record<FixtureType, { level: number; cct: CCTVa
     sconce: { level: 0.1, cct: 2700 },
     floor: { level: 0.1, cct: 2700 },
     table: { level: 1.0, cct: 3000 },
+    chandelier: { level: 0.1, cct: 2700 },  // P37d：阅读时低亮氛围
   },
 };
 

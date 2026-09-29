@@ -36,6 +36,7 @@ const FIXTURE_TYPE_LABELS: Record<FixtureType, string> = {
   sconce: '壁灯',
   floor: '落地灯',
   table: '台灯',
+  chandelier: '吊灯组',  // P37d（区别于 pendant 单头吊灯）
 };
 
 // project 内含 Set（Fixture.lockedFields），immer 需要 MapSet 插件才能 draft 它们

@@ -30,6 +30,7 @@ const FIXTURE_TYPE_LABELS: Record<FixtureType, string> = {
   sconce: '壁灯',
   floor: '落地灯',
   table: '台灯',
+  chandelier: '吊灯组',  // P37d
 };
 
 function fixtureTypeLabel(type: FixtureType): string {

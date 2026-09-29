@@ -100,7 +100,8 @@ export type FixtureType =
   | 'cove'
   | 'sconce'
   | 'floor'
-  | 'table';
+  | 'table'
+  | 'chandelier';  // P37d：吊灯（多臂球形对称，挂天花）
 
 /** 安装方式：决定可吸附的表面与姿态约束（§4.6.4） */
 export type MountType =

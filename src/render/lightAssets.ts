@@ -45,12 +45,13 @@ import { cctToRGB } from './lightBuilder.js';
 /** 有资产的灯具类型 key（与 public/assets/lights/loader-manifest.json 的 key 一致） */
 export type LightAssetKey = 'pendant' | 'chandelier' | 'desk_lamp' | 'wall_sconce' | 'ceiling_lamp';
 
-/** 有资产覆盖的 FixtureType 子集 */
+/** 有资产覆盖的 FixtureType 子集（P37d：chandelier 独立，不再共用 pendant） */
 export const FIXTURE_TYPES_WITH_ASSETS: readonly FixtureType[] = [
-  'pendant', // → 'pendant'（chandelier 共用，见下方 assetKeyForType）
+  'pendant', // → 'pendant'
   'table',
   'sconce',
   'downlight',
+  'chandelier',  // P37d：吊灯（独立 FixtureType，不再共用 pendant）
 ] as const;
 
 /**
@@ -67,6 +68,7 @@ export const ASSET_KEY_FOR_TYPE: Partial<Record<FixtureType, LightAssetKey>> = {
   table: 'desk_lamp',
   sconce: 'wall_sconce',
   downlight: 'ceiling_lamp',
+  chandelier: 'chandelier',  // P37d
 };
 
 /**
@@ -90,7 +92,7 @@ export const ASSET_KEY_FOR_TYPE: Partial<Record<FixtureType, LightAssetKey>> = {
  *   - ceiling_lamp 0.30（真实 h=0.952，缩到 0.30 视觉合理）
  *   - wall_sconce 0.35（真实 h=0.342 保持）
  *   - desk_lamp 0.55（真实 h=0.893，缩到 0.55 视觉合理）
- *   - chandelier 1.0（本轮不动，axis 判断错误留到 P37d）
+ *   - chandelier 0.8（P37d 修正：真实 y 跨度 0.7983m，取 0.8）
  */
 export interface LightAssetDef {
   /** 资产目录名（public/assets/lights/<name>/） */
@@ -114,8 +116,10 @@ export const LIGHT_ASSET_DEFS: Record<LightAssetKey, LightAssetDef> = {
   wall_sconce:  { name: 'wall_sconce',  axis: 'vertical',   targetSize: 0.35, anchor: 'top',    lightOffset: -0.18 },
   // desk_lamp 真实 h=0.893，缩到 0.55 视觉合理
   desk_lamp:    { name: 'desk_lamp',    axis: 'vertical',   targetSize: 0.55, anchor: 'bottom', lightOffset:  0.43 },
-  // chandelier 本轮不修（axis 判断本就错），保留 P37a 值不动
-  chandelier:   { name: 'chandelier',   axis: 'horizontal', targetSize: 1.0,  anchor: 'center', lightOffset: 0 },
+  // chandelier P37d 修正：实测 y 跨度 0.7983m 是主轴（三轴近似相等，y 是垂直悬挂方向），
+  // targetSize 取 0.8 与真实几何匹配；anchor='top' 让吊点（顶部）对齐原点，向下延伸；
+  // lightOffset=-0.4 是灯泡重心位置（y 跨度 0.8m 的中下）
+  chandelier:   { name: 'chandelier',   axis: 'vertical',   targetSize: 0.8,  anchor: 'top',    lightOffset: -0.4 },
 };
 
 /** 判断某 FixtureType 是否有资产可用（纯函数，供单测） */
@@ -209,7 +213,7 @@ export function _resetLightAssetCacheForTest(): void {
  *   - anchor='bottom' → 资产底端在原点，向上延伸（光源在灯具底部上方）
  *     desk_lamp：立在桌面上
  *   - anchor='center' → 资产中心在原点
- *     chandelier（多臂全向）
+ *     （本阶段无类型使用 center）
  *
  * **纯函数**（不 fetch、不建 loader），可直接用真实 Box3 / Object3D 单测。
  *

@@ -61,6 +61,7 @@ const TYPE_DEFAULTS: Record<FixtureType, { form: ShadeForm; mount: MountType; lu
     sconce: { form: 'cone', mount: 'wall', lumens: 300, beamAngle: 45 },
     floor: { form: 'cylinder', mount: 'floor', lumens: 600, beamAngle: 60 },
     table: { form: 'cylinder', mount: 'tabletop', lumens: 400, beamAngle: 50 },
+    chandelier: { form: 'sphere', mount: 'suspended', lumens: 1200, beamAngle: 100 },  // P37d
   };
 
 export function makeFixture(opts: FixtureOptions = {}): Fixture {
