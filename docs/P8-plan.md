@@ -104,6 +104,8 @@ P8 六阶段全部完成，测试 310 → 435 条。时间轴经用户验收改�
 | P36 Phase 3 §3.3 双视图联动（顶视机位 + OrbitControls 顶视锁定 + 2D/3D 选中态同步 + 家具 `.gltf` loader manifest 驱动升级） | ✅ 已提交（`5b35a2d`，930 → 942） | `docs/P36-spec.md`（2026-09-29） |
 | P37a Phase 2 灯具资产管线（灯具 GLTF manifest loader + `normalizeAndAnchor` 主轴向归一化 + `attachGlowMesh` 外挂发光面 + `sceneEngine.loadFixtureAssetAsync` attempt-token 替换 + loader-manifest.json + 下载脚本补 manifest 生成） | ✅ 已提交（`b559aa6` + 修复 commit，942 → 954） | `docs/P37-spec.md`（2026-09-29） |
 | P37a-fix 视觉修复（`normalizeAndAnchor` 平移量算法改对——原假设资产顶点关于原点居中，实际不对称；新增 `findEmissiveMeshes` 复用资产自带 emissive 网格当发光面，不再外挂合成圆片；`targetSize` 按真实几何重定值） | ✅ 已提交（`d5fb660`，954 → 956） | `docs/P37-fix-spec.md`（2026-09-29） |
+| P37c 灯具吸附到安装面（`surfaceSnap(point, normal, mount)` 取代统一偏移的 `dropPosFromHit`，recessed 平齐表面、其他偏 0.03m；`projectToSurface(pos, mount, surfaceY)` 在 TransformControls 拖动结束时贴回原安装面；默认工程 3 盏灯 pos 贴合安装面） | ✅ 已提交（`8e11b98`，956 → 968） | `docs/P37c-spec.md`（2026-09-29） |
+| P37c-fix 修正 surfaceSnap 法线方向（原公式 `-` 与 `mountFromNormal` 朝房间内约定相反，天花板灯被推到天花上方 3cm；公式改 `+`）+ `mountFromNormal` 加 fromInside 区分天花/地面（原 `[0,+1,0]` 误判 recessed）+ 新增 `Fixture.installNormal`（仅 wall 需要，pos 无法反推墙面法线）+ wall 拖动不投影（仅凭法线无法恢复墙面世界坐标，投影会漂移；保留 y/z 拖动） | ✅ 已提交（`214836b`+修正，968 → 976） | `docs/P37c-fix-spec.md`（2026-09-29） |
 
 ### Phase 0 止血（源自 `Lumina项目审查与后续工作方案.md` §二）
 

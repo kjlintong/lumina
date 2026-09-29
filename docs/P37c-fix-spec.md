@@ -46,9 +46,9 @@ wall 碰巧对，是因为 `mountFromNormal` 给的是朝房间内法线，而"�
 
 - [ ] `surfaceSnap` 修正法线方向（公式 `pos = point + normal * offset`，normal 朝房间内）
 - [ ] `mountFromNormal` 支持区分天花与地面（新参数 `fromInside`，不破坏现有调用）
-- [ ] wall 类支持拖动后贴回墙面：`projectToSurface` 用 `installNormal` 精确投影
-- [ ] 新增 `Fixture.installNormal?: [x, y, z]` 字段（只在 mount='wall' 时有意义）
-- [ ] 保存/加载后 wall 灯仍能贴回原墙面（不丢失 installNormal）
+- [ ] wall 类支持保存安装面法线（`installNormal` 随 Fixture 序列化），但**拖动后不投影**——仅凭法线无法恢复墙面世界坐标，任何沿法线的加减都会让 pos 每次漂移 ±0.03m，是 bug；正确行为是保留用户拖动后的 y/z（想改高度就拖动 y，离墙距离保持）
+- [ ] 新增 `Fixture.installNormal?: [x, y, z]` 字段（只在 mount='wall' 时有意义，安装时记录墙面方向）
+- [ ] 保存/加载后 wall 灯不丢失 installNormal（structuredClone 对元组无损，序列化无需改）
 - [ ] 默认工程的筒灯、吊灯位置**保持不变**（2.8 / 2.77）—— 回归测试锁定
 - [ ] 测试全绿，不新增 lint error，应用代码仍 2 chunk
 
@@ -90,7 +90,7 @@ export interface Fixture {
 ```
 
 **序列化**：`serialize.ts` 用 `structuredClone`（对元组无损），不需要改。
-**默认值**：`undefined` —— `projectToSurface` 对缺值的 wall 灯走"不投影"回落。
+**默认值**：`undefined` —— `projectToSurface` 对 wall 灯一律走"不投影"（返回原 pos，见 §3.2）；`installNormal` 仅用于保存墙面方向记录。
 
 ---
 
@@ -125,42 +125,29 @@ export function surfaceSnap(
 }
 ```
 
-### 3.2 `src/render/snapToGrid.ts` —— 改 `projectToSurface` 支持 wall
+### 3.2 `src/render/snapToGrid.ts` —— 改 `projectToSurface`，wall 不投影
+
+**注意**：spec 初稿写过 `pos - installNormal * offset` 的投影公式，但浏览器端到端探针实测发现该公式**幂等性失败**——已表面 pos=(2.97,1.5,0) 投影后变成 (3.0,1.5,0)，每次 +0.03m，越拖越远。根因：仅凭 installNormal（朝西法线 (-1,0,0)）无法恢复墙面 S 的世界坐标（不知道墙在 x=3），所以无论 `+` 还是 `−` 都做不到真正的"贴回墙面"。
+
+正确行为：wall 分支**不投影，返回原 pos**。用户拖动墙面灯具后停在当前位置，y/z 保留拖动态（想改高度就拖动 y，离墙距离保持）。这与水平安装面不同——那里"表面"是硬编码常数（surfaceY），投影有意义；墙面"表面"是变量，投影只会漂移。
 
 ```ts
-/**
- * 把 pos 投影回安装面（TransformControls 拖动结束时贴回）。
- *
- * @param pos 当前 pos（可能被用户拖到任意位置）
- * @param mount 灯具安装类型
- * @param surfaceY 水平安装面的 Y 坐标（ceiling=天花板高，floor/tabletop=桌面/地面高）
- * @param installNormal wall 灯的安装面法线（朝房间内）；非 wall 类忽略
- * @param offsetM 沿法线的偏移，recessed 默认 0，其他 0.03
- * @returns 贴回表面后的 pos
- *
- * 幂等性：对已在表面的 pos，返回值等于输入（拖动多次不漂移）。
- */
 export function projectToSurface(
   pos: readonly [number, number, number],
   mount:
     | 'ceiling' | 'recessed' | 'suspended' | 'track'
     | 'wall' | 'floor' | 'tabletop',
   surfaceY: number,
-  installNormal?: readonly [number, number, number],
   offsetM = 0.03,
 ): readonly [number, number, number] {
   const offset = mount === 'recessed' ? 0 : offsetM;
 
   if (mount === 'wall') {
-    // 墙面：需要 installNormal 才能投影（水平法线，方向取决于哪面墙）
-    if (!installNormal) return pos; // 无记录 → 不投影（回落）
-    // 把 pos 投影回墙面：沿法线反向推到点积为 0 的位置（即 pos·n = point·n）
-    // 简化：沿 -normal 方向平移 offset（因为 wall 灯本来就离墙 0.03m）
-    return [
-      pos[0] - installNormal[0] * offset,
-      pos[1] - installNormal[1] * offset,
-      pos[2] - installNormal[2] * offset,
-    ];
+    // 墙面：仅凭 installNormal 无法恢复墙面 S 的世界坐标（知道法线朝西不等于知道墙在 x=3），
+    // 所以无法做真正的"贴回墙面"。返回原 pos，保留用户拖动后的 y/z 变化。
+    // 与水平安装面（y 由 surfaceY 硬编码）不同：那里"表面"是确定的常数，投影有意义；
+    // 墙面"表面"是变量，投影只会让 pos 沿法线漂移（每次 ±0.03m），是 bug。
+    return pos;
   }
 
   // 水平安装面：保留 x, z，y 强制到 surfaceY
@@ -276,8 +263,9 @@ export function makeFixture(opts: FixtureOptions = {}): Fixture {
   });
 
 // onTransformEnd / setTransformCallback 内
-- const snapped = projectToSurface(newPos, fixture.mount, ceilingY);
-+ const snapped = projectToSurface(newPos, fixture.mount, ceilingY, fixture.installNormal);
+// 注意：projectToSurface 已移除 installNormal 参数（wall 不投影，见 §3.2），
+// 所以这里**不传** fixture.installNormal。
+const snapped = projectToSurface(newPos, fixture.mount, ceilingY);
 ```
 
 **注意**：`mount='recessed'` 时 offset=0，公式 `pos = point + normal*0 = point`。
@@ -308,16 +296,16 @@ export function makeFixture(opts: FixtureOptions = {}): Fixture {
 - tabletop：`normal=[0,+1,0]`，point=(0,0.75,0) → pos=(0, **0.78**, 0)
 - wall：`normal=[-1,0,0]`（东墙朝房间内），point=(3,1.5,0) → pos=(**2.97**, 1.5, 0)
 
-`projectToSurface` 6 条：同样改 normal + 加 installNormal 参数：
+`projectToSurface` 6 条：同样改 normal（**不加 installNormal 参数**——wall 不投影，见 §3.2）：
 - recessed：pos=(1.4,2,-1), mount='recessed', surfaceY=2.8 → (1.4, **2.8**, -1)（offset=0）
 - suspended：pos=(1.4,2,-1), mount='suspended', surfaceY=2.8 → (1.4, **2.77**, -1)
 - floor：pos=(-2.4,1.4,1.4), mount='floor', surfaceY=0 → (-2.4, **0.03**, 1.4)
 - tabletop：pos=(0,0,0), mount='tabletop', surfaceY=0.75 → (0, **0.78**, 0)
-- **wall（新）**：pos=(3.5,1.5,0.5), mount='wall', installNormal=[-1,0,0] → (**3.5-0.03**, 1.5, 0.5) = (**3.47**,...)
-- **wall 无 installNormal（回落）**：`projectToSurface(pos,'wall',_,undefined)` → 原 pos（toBe）
+- **wall 不投影（新）**：pos=(3.5,1.5,0.5), mount='wall' → 返回原 pos（toBe，引用相等）
+- **wall 已表面幂等（新）**：pos=(2.97,1.5,0.0), mount='wall' → 返回原 pos（toBe）
 - 水平坐标保留：不变
 
-**+2 条**（wall 两条），共 14 条。
+**+1 条**（原 12 → 13），surfaceSnap.test.ts 共 13 条。
 
 ### 4.2 `src/render/__tests__/mountFromNormal.test.ts` —— 改 1 条 + 加 3 条
 
@@ -325,8 +313,16 @@ export function makeFixture(opts: FixtureOptions = {}): Fixture {
 - 加：`[0,-1,0], fromInside=true` → ceiling
 - 加：`[0,+1,0], fromInside=true` → floor
 - 加：`[0,-1,0], fromInside=false` → floor（外部视角反转）
+- 加：dropPosFromHit 的 4 条覆盖（默认 offset、负法线、自定义 offset）
 
-**+3 条**，共 10 条（原 7）。
+**+7 条**（7 → 14），mountFromNormal.test.ts 共 14 条。
+
+**总计**（各文件最终条数）：
+- surfaceSnap.test.ts：12 → 13（+1）
+- mountFromNormal.test.ts：7 → 14（+7）
+- surfaceSnapE2E.test.ts：0 → 4（+4，新文件）
+
+**净增 +8 + 新文件**，基线 968 → **976**。以实际 diff 为准。
 
 ### 4.3 新增：`surfaceSnap` × P37a-fix × `normalizeAndAnchor` 端到端
 
@@ -358,18 +354,11 @@ describe('surfaceSnap → pos → anchor worldY 组合（P37c-fix）', () => {
 
 **+4 条**（新文件）。
 
-**总计**（各文件最终条数）：
-- surfaceSnap.test.ts：12 → 14（+2）
-- mountFromNormal.test.ts：7 → 10（+3）
-- surfaceSnapE2E.test.ts：0 → 4（+4，新文件）
-
-**净增 +9**，基线 968 → **977**。以实际 diff 为准。
-
 ---
 
 ## 5. 验证
 
-1. `npm test` → 全绿（约 977）
+1. `npm test` → 全绿（976）
 2. `npm run typecheck` → 全绿
 3. `npm run lint` → 不新增 error（清 `node_modules/.cache` 后测，330/12 基线）
 4. `npm run build` → 应用代码仍 2 chunk

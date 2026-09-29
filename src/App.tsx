@@ -692,7 +692,7 @@ export default function App() {
       const fixture = st.project.fixtures[fixtureId];
       if (!fixture) return;
       const ceilingY = st.project.ceilingH ?? 2.8;
-      const snapped = projectToSurface(newPos, fixture.mount, ceilingY, fixture.installNormal);
+      const snapped = projectToSurface(newPos, fixture.mount, ceilingY);
       st.moveAndLockFixture(fixtureId, snapped);
       st.setNotice(
         `已移动 ${fixtureId.slice(0, 6)}… 到 (${snapped[0].toFixed(2)}, ${snapped[1].toFixed(2)}, ${snapped[2].toFixed(2)})`,

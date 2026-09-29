@@ -81,35 +81,21 @@ describe('snapToGrid: projectToSurface (P37c-fix)', () => {
     expect(p[2]).toBeCloseTo(0, 5);
   });
 
-  it('用户把壁灯从东墙拖到半空：沿 -installNormal 平移 offset（P37c-fix §3.2 公式）', () => {
-    // installNormal=[-1,0,0]（东墙朝房间内），pos=[3.5, 1.5, 0.5]。
-    // 公式：pos - installNormal * offset
-    //   x = 3.5 - (-1)*0.03 = 3.53
-    // y/z 不变。
-    // 注意：spec §4.1 的断言 (3.47) 用的是 `+` 号，与 §3.2 的代码公式 (`-`) 不一致。
-    // 任务说明明确采用 `pos - installNormal * offset`（"不是 pos + installNormal * offset"），
-    // 因此这里按 `-` 公式测，期望 3.53。
-    const p = projectToSurface([3.5, 1.5, 0.5], 'wall', 2.8, [-1, 0, 0]);
-    expect(p[1]).toBeCloseTo(1.5, 5);
-    expect(p[2]).toBeCloseTo(0.5, 5);
-    expect(p[0]).toBeCloseTo(3.53, 5);
-  });
-
-  it('西墙壁灯（installNormal=[+1,0,0]）：沿 -installNormal 平移 offset', () => {
-    // installNormal=[+1,0,0]（西墙 x=-3，朝房间内），pos=[-3.5, 1.5, -0.3]。
-    // 公式：pos - installNormal * offset
-    //   x = -3.5 - (+1)*0.03 = -3.53
-    //   即向墙外偏 0.03（沿 -normal = -X 方向）。
-    const p = projectToSurface([-3.5, 1.5, -0.3], 'wall', 2.8, [1, 0, 0]);
-    expect(p[1]).toBeCloseTo(1.5, 5);
-    expect(p[2]).toBeCloseTo(-0.3, 5);
-    expect(p[0]).toBeCloseTo(-3.53, 5);
-  });
-
-  it('wall 无 installNormal（回落）：返回原 pos 引用', () => {
-    const pos = [3.0, 1.5, 0.0] as const;
-    const p = projectToSurface(pos, 'wall', 2.8, undefined);
+  it('wall 灯：不投影，返回原 pos（仅凭 installNormal 无法恢复墙面世界坐标）', () => {
+    // 墙面"表面"是变量（每面墙在不同位置），仅知道法线方向不足以投影。
+    // 任何沿法线的加减都会让 pos 每次漂移 ±0.03m，越拖越远，是 bug。
+    // 正确行为：保留用户拖动后的位置（y/z 可改高度，离墙距离保持）。
+    const pos = [3.5, 1.5, 0.5] as const;
+    const p = projectToSurface(pos, 'wall', 2.8);
     expect(p).toBe(pos);
+  });
+
+  it('wall 已表面 pos：不投影，保持贴墙位置（幂等）', () => {
+    // 已贴墙的壁灯（pos.x=2.97，离东墙 0.03m），拖动后再次投影应回到原位。
+    const pos = [2.97, 1.5, 0.0] as const;
+    const p = projectToSurface(pos, 'wall', 2.8);
+    expect(p).toBe(pos);
+    expect(p[0]).toBeCloseTo(2.97, 5);
   });
 
   it('水平坐标不被改动（只修正 Y）', () => {

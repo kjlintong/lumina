@@ -56,9 +56,11 @@ export function surfaceSnap(
  * @param pos 当前 pos（可能被用户拖到任意位置）
  * @param mount 灯具安装类型
  * @param surfaceY 水平安装面的 Y 坐标（ceiling=天花板高，floor/tabletop=桌面/地面高）
- * @param installNormal wall 灯的安装面法线（朝房间内）；非 wall 类忽略
  * @param offsetM 沿法线的偏移，recessed 默认 0，其他 0.03
  * @returns 贴回表面后的 pos
+ *
+ * **wall 分支**：不投影，返回原 pos（仅凭 installNormal 无法恢复墙面世界坐标，
+ * 投影会让 pos 沿法线漂移）。保留用户拖动后的 y/z 变化。
  *
  * 幂等性：对已在表面的 pos，返回值等于输入（拖动多次不漂移）。
  */
@@ -73,22 +75,18 @@ export function projectToSurface(
     | 'tabletop'
     | 'track',
   surfaceY: number,
-  installNormal?: readonly [number, number, number],
   offsetM = 0.03,
 ): readonly [number, number, number] {
   const offset = mount === 'recessed' ? 0 : offsetM;
 
   if (mount === 'wall') {
-    // 墙面：需要 installNormal 才能投影（水平法线，方向取决于哪面墙）。
-    // 无记录 → 不投影（回落）。
-    if (!installNormal) return pos;
-    // wall 灯本来就离墙 offset 米（沿 installNormal 朝房间内方向），
-    // 拖动后要把它推回墙面 = 沿 installNormal 反方向平移 offset。
-    return [
-      pos[0] - installNormal[0] * offset,
-      pos[1] - installNormal[1] * offset,
-      pos[2] - installNormal[2] * offset,
-    ];
+    // 墙面：仅凭 installNormal 无法恢复墙面 S 的世界坐标（知道法线朝西不等于知道墙在 x=3），
+    // 所以无法做真正的"贴回墙面"。返回原 pos，保留用户拖动后的 y/z 变化（想改高度就拖动 y，
+    // 离墙距离保持）。要贴回墙面靠手动或 5cm 网格吸附。
+    //
+    // 与水平安装面（y 由 surfaceY 硬编码）不同：那里"表面"是确定的常数，投影有意义；
+    // 墙面"表面"是变量，投影只会让 pos 沿法线漂移（每次 ±0.03m），是 bug。
+    return pos;
   }
 
   // 水平安装面：保留 x, z，y 强制到 surfaceY。
