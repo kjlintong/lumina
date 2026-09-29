@@ -5,3 +5,5 @@ build
 .env
 .DS_Store
 .hermes/
+__pycache__/
+*.pyc

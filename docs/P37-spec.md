@@ -22,7 +22,8 @@
 - [ ] `Fixture.pos` 仍是光源权威世界坐标（换资产不改光源位置）
 - [ ] 拖放新灯（HTML5 DnD + raycast）与 TransformControls 选中后拖拽**照常工作**
 - [ ] 光预算代理（`isProxy`）路径也拿到真实资产（降级只是不建 Light，不降级外观）
-- [ ] 测试 942 → 954（新增 12 条）全绿；`npm run verify` + `npm run build` 通过
+- [ ] 测试 942 → 954（新增 12 条）全绿；`npm run typecheck` + `npm test` 全绿；
+      `npm run lint` 不新增 error（12 个既有 error 与本轮无关）；`npm run build` 通过
 
 **不做视觉判定**：本开发环境是 WSL2 SwiftShader，模型视觉质量（比例、朝向、
 是否穿模）由用户在真实 GPU 上验收。子代理用数值 / DOM 断言验证逻辑，不声称已
@@ -943,9 +944,18 @@ JSON 内容，保证 loader 在 dev / build 时能找到路径。脚本修改是
 ## 6. 验证
 
 1. `npm test`（不跑 build，快）→ 942 → **954**（新增 12 条）全绿
-2. `npm run verify`（typecheck + lint + tests）→ 全绿
-3. `npm run build` → 通过；构建产物**仍然只有 2 个 chunk**（index-*.js + three-*.js，
-   CLAUDE.md 明令禁止加第三个 chunk）
+2. `npm run typecheck` + `npm test` → 全绿
+   （`npm run verify` = `typecheck && lint && test`，**lint 阶段会以 exit 1 中断**，
+   因为全仓本来就有 12 个 lint error（ImportPanel / ModelPlan 等既有文件），
+   与本轮无关。lint 阶段的判定标准是：`npm run lint` 输出
+   `✖ 330 problems (12 errors, 318 warnings)`，与改动前一致 —— **不新增 error**。
+   注：必须清 `node_modules/.cache` 后测，eslint 缓存会让结果滞后一轮）
+3. `npm run build` → 通过；**应用代码仍然只拆 2 个 chunk**（`index-*.js` + `three-*.js`，
+   CLAUDE.md:44 的约束）。产物里另有 4 个 draco 解码器文件（`draco_wasm_wrapper-*.js` ×2、
+   `draco_decoder-*.wasm` ×2、`draco_decoder-*.js`），这是 P36 引入 `DRACOLoader` 时带来的
+   vendor 产物，本轮不增不减。
+   实际 `dist/assets/*.js` 共 5 个：`index` + `three` + 3 个 draco。**不要因此判定失败**
+   —— 判定标准是 index/three 之外没有新增应用代码 chunk。
 4. `python3 -m py_compile scripts/download-assets.py` → 通过
 5. `ls public/assets/lights/loader-manifest.json` → 存在
 6. `ls public/assets/lights/manifest.json` → 仍存在（原脚本产物，不删）

@@ -294,7 +294,7 @@ export class SceneEngine {
    * 只存 attempt 数字（不存 fallback / entry 引用）—— entry 通过
    * `fixtureLights.get(id)` 现查，避免缓存失效。
    */
-  private fixtureAssetStates: Map<string, number> = new Map();
+  private fixtureAssetStates = new Map<string, number>();
 
   /**
    * 当前激活的场景 key（由 sceneController / App 在场景切换时同步过来）。
