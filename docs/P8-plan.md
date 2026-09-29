@@ -106,6 +106,8 @@ P8 六阶段全部完成，测试 310 → 435 条。时间轴经用户验收改�
 | P37a-fix 视觉修复（`normalizeAndAnchor` 平移量算法改对——原假设资产顶点关于原点居中，实际不对称；新增 `findEmissiveMeshes` 复用资产自带 emissive 网格当发光面，不再外挂合成圆片；`targetSize` 按真实几何重定值） | ✅ 已提交（`d5fb660`，954 → 956） | `docs/P37-fix-spec.md`（2026-09-29） |
 | P37c 灯具吸附到安装面（`surfaceSnap(point, normal, mount)` 取代统一偏移的 `dropPosFromHit`，recessed 平齐表面、其他偏 0.03m；`projectToSurface(pos, mount, surfaceY)` 在 TransformControls 拖动结束时贴回原安装面；默认工程 3 盏灯 pos 贴合安装面） | ✅ 已提交（`8e11b98`，956 → 968） | `docs/P37c-spec.md`（2026-09-29） |
 | P37c-fix 修正 surfaceSnap 法线方向（原公式 `-` 与 `mountFromNormal` 朝房间内约定相反，天花板灯被推到天花上方 3cm；公式改 `+`）+ `mountFromNormal` 加 fromInside 区分天花/地面（原 `[0,+1,0]` 误判 recessed）+ 新增 `Fixture.installNormal`（仅 wall 需要，pos 无法反推墙面法线）+ wall 拖动不投影（仅凭法线无法恢复墙面世界坐标，投影会漂移；保留 y/z 拖动） | ✅ 已提交（`214836b`+修正，968 → 976） | `docs/P37c-fix-spec.md`（2026-09-29） |
+| P37d chandelier 接入系统（实测 chandelier 是死资产——`LIGHT_ASSET_DEFS.chandelier` 有定义但 FixtureType/TYPE_DEFAULTS/ASSET_KEY_FOR_TYPE/两处 LABELS/Library/UI/fixtureModels 都不认识 'chandelier'；顺带修 axis 从 horizontal 改 vertical、targetSize 1.0→0.8，实测真实 y 跨度 0.7983m）+ 9 处改动 + 3 处 Record<FixtureType,_> 穷尽性连带修复（lightBudget/circuitMapping.test/fixtureLibraryPanel.test） | ✅ 已提交（`531825a`，976 → 987） | `docs/P37d-spec.md`（2026-09-29） |
+| P37b FixtureLibraryPanel 3D 预览（新建 `fixturePreview.tsx` 离屏渲染器：单例共享 WebGLRenderer + preserveDrawingBuffer + toDataURL + 缓存 + 并发合并；5 个有资产类型渲真实 GLTF、4 个无资产类型渲 buildFixtureModel；FixturePreviewCanvas 组件懒渲染 + 失败回落 SVG；jsdom 环境自动回落，现有 5 条测试不变） | ✅ 已提交（`b2c7f3a`，987 → 992） | `docs/P37b-spec.md`（2026-09-29） |
 
 ### Phase 0 止血（源自 `Lumina项目审查与后续工作方案.md` §二）
 

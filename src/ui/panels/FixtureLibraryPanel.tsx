@@ -15,15 +15,16 @@
 
 import type { FixtureType } from '../../core/types.js';
 import type { ReactElement } from 'react';
+import { FixturePreviewCanvas } from '../../render/fixturePreview.js';
 import { Panel } from './Panel.js';
 
 /** 8 种灯具的库元数据：type + 中文标签 + 拖入提示 + 简笔图标 */
-const LIBRARY: ReadonlyArray<{
+const LIBRARY: readonly {
   type: FixtureType;
   label: string;
   hint: string;
   icon: ReactElement;
-}> = [
+}[] = [
   {
     type: 'downlight',
     label: '筒灯',
@@ -157,7 +158,9 @@ export function FixtureLibraryPanel() {
               e.dataTransfer.effectAllowed = 'copy';
             }}
           >
-            <div className="fixture-library-icon">{icon}</div>
+            <div className="fixture-library-icon">
+              <FixturePreviewCanvas type={type} fallbackIcon={icon} />
+            </div>
             <div className="fixture-library-label">
               {label}
               <div className="fixture-library-hint">{hint}</div>
