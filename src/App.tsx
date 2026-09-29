@@ -280,7 +280,7 @@ function handleDropFixture(
   const face = hitUsed.face;
   const normal: readonly [number, number, number] = [face.normal.x, face.normal.y, face.normal.z];
   const point: readonly [number, number, number] = [hitUsed.point.x, hitUsed.point.y, hitUsed.point.z];
-  const mount = mountFromNormal(normal);
+  const mount = mountFromNormal(normal, { fromInside: true });
   // P37c：按 mount 类型贴到安装面（recessed 平齐，其他偏移 0.03m）
   const rawPos = surfaceSnap(point, normal, mount);
   // 水平方向仍走 50mm 网格吸附（Y 保持安装面位置，不再被网格化）
@@ -293,6 +293,9 @@ function handleDropFixture(
     type: fixtureType as 'downlight' | 'spot' | 'pendant' | 'linear' | 'cove' | 'sconce' | 'floor' | 'table',
     mount,
     pos: snapped,
+    // P37c-fix：wall 灯必须记住是哪面墙（4 个方向无法从 pos 反推），
+    // 拖动后才能贴回原墙面。非 wall 类不需要存（可由 mount + ceilingH 推导）。
+    ...(mount === 'wall' ? { installNormal: [normal[0], normal[1], normal[2]] as const } : {}),
   });
   useProjectStore.getState().selectFixture(id);
   useProjectStore.getState().setNotice(`已添加灯具（可 Ctrl+Z 撤销）`);
@@ -683,13 +686,13 @@ export default function App() {
     const eng = engineRef.current;
     if (!eng) return;
     eng.setTransformCallback((fixtureId, newPos) => {
-      // P37c：把 pos 投影回原安装面（ceiling / floor / tabletop）；
-      // wall 类暂不处理（projectToSurface 对 wall 返回原 pos，见 spec §8）。
+      // P37c：把 pos 投影回原安装面；wall 走 installNormal 精确投影
+      // （P37c-fix 新增），水平面走 mount + ceilingH 推导。
       const st = useProjectStore.getState();
       const fixture = st.project.fixtures[fixtureId];
       if (!fixture) return;
       const ceilingY = st.project.ceilingH ?? 2.8;
-      const snapped = projectToSurface(newPos, fixture.mount, ceilingY);
+      const snapped = projectToSurface(newPos, fixture.mount, ceilingY, fixture.installNormal);
       st.moveAndLockFixture(fixtureId, snapped);
       st.setNotice(
         `已移动 ${fixtureId.slice(0, 6)}… 到 (${snapped[0].toFixed(2)}, ${snapped[1].toFixed(2)}, ${snapped[2].toFixed(2)})`,

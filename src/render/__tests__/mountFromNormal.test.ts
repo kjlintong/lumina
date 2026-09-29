@@ -1,13 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { mountFromNormal, dropPosFromHit } from '../mountFromNormal.js';
 
-describe('mountFromNormal', () => {
+describe('mountFromNormal (P37c-fix)', () => {
   it('法线向下 (0,-1,0)（从下方点天花，PlaneGeometry 翻转后 world normal = -Y）→ ceiling', () => {
     expect(mountFromNormal([0, -1, 0])).toBe('ceiling');
   });
 
-  it('法线向上 (0,1,0)（从上方点地板，罕用）→ recessed', () => {
-    expect(mountFromNormal([0, 1, 0])).toBe('recessed');
+  it('法线向上 (0,1,0)（地面朝上，从房间内部点地板）→ floor（P37c-fix Bug 2 修正）', () => {
+    // 旧版：→ recessed（把地面误判为天花板嵌入）。
+    // 新版（Bug 2 修复）：从房间内部点地面时，world normal = +Y，正确分类为 floor。
+    expect(mountFromNormal([0, 1, 0])).toBe('floor');
   });
 
   it('法线朝房间 (0,0,1) → wall', () => {
@@ -23,14 +25,27 @@ describe('mountFromNormal', () => {
     expect(mountFromNormal([0.3, 0.6, 0.74])).toBe('wall');
   });
 
-  it('ny 恰好 = 0.7（阈值）→ 走 wall 分支（<0.7 判定）', () => {
-    // 0.7 不是 > 0.7，所以不算 ceiling；也不是 < -0.7；|ny|=0.7 也不 < 0.7，
-    // 落到兜底 suspended。这是边界行为。
+  it('ny 恰好 = 0.7（阈值）→ 走 suspended 兜底', () => {
+    // |ny| = 0.7 不 < 0.7，所以不算 wall；dir = -0.7 不 > 0.7 也不 < -0.7，
+    // 落到兜底 suspended。
     expect(mountFromNormal([0, 0.7, 0])).toBe('suspended');
   });
 
   it('ny = -0.8（严格 < -0.7，从下方点天花）→ ceiling', () => {
     expect(mountFromNormal([0, -0.8, 0])).toBe('ceiling');
+  });
+
+  it('fromInside=true：[0,-1,0] → ceiling', () => {
+    expect(mountFromNormal([0, -1, 0], { fromInside: true })).toBe('ceiling');
+  });
+
+  it('fromInside=true：[0,+1,0] → floor', () => {
+    expect(mountFromNormal([0, 1, 0], { fromInside: true })).toBe('floor');
+  });
+
+  it('fromInside=false：[0,-1,0] → floor（外部视角反转）', () => {
+    // 从表面外侧看点，法线取反后 dir = ny = -1 < -0.7 → floor。
+    expect(mountFromNormal([0, -1, 0], { fromInside: false })).toBe('floor');
   });
 });
 

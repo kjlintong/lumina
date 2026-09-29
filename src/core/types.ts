@@ -200,6 +200,13 @@ export interface Fixture {
   shape: FixtureShape;
   /** 世界坐标（米）—— 唯一权威数据源（§2.2） */
   pos: readonly [x: number, y: number, z: number];
+  /**
+   * P37c-fix：安装面法线（朝房间内单位向量）。
+   * 仅 mount='wall' 时需要 —— 墙面有 4 个方向，pos 无法反推法线，
+   * 必须显式保存，否则拖动后无法贴回原墙面。
+   * ceiling / floor / tabletop 等安装面可由 mount + surfaceY 推导，不存。
+   */
+  installNormal?: readonly [x: number, y: number, z: number];
   /** 姿态：pitch 俯仰 / yaw 方位，弧度 */
   rot: { pitch: number; yaw: number };
   photometric: Photometric;

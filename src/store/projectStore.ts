@@ -203,6 +203,7 @@ export function createInitialProject(): LuminaProject {
   const dining = makeZone('dining', [1.4, -1.0], { name: '餐厅用餐区' });
 
   // P37c：默认工程 3 盏灯 pos 严格贴合安装面（ceilingH=2.8）
+  // P37c-fix：这 3 盏 pos 是手改的、不经过 surfaceSnap，所以法线修正不影响它们（保持 2.8 / 2.77 / 0.03）
   const downlight = makeFixture({ type: 'downlight', pos: [-1.2, 2.8, 0.8], lumens: 500, cct: 2700 });
   //   mount='recessed' → surfaceSnap 给 pos=[-1.2, 2.8, 0.8]（平齐天花板，offset=0）
   const pendant = makeFixture({ type: 'pendant', pos: [1.4, 2.77, -1.0], lumens: 800, cct: 3000 });

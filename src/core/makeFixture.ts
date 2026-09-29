@@ -33,6 +33,8 @@ export interface FixtureOptions {
   group?: string;
   circuit?: string;
   pos?: readonly [x: number, y: number, z: number];
+  /** P37c-fix：安装面法线（朝房间内）。仅 mount='wall' 时需要。 */
+  installNormal?: readonly [x: number, y: number, z: number];
   rot?: { pitch: number; yaw: number };
   source?: 'sku' | 'custom';
   skuId?: string;
@@ -90,6 +92,9 @@ export function makeFixture(opts: FixtureOptions = {}): Fixture {
       shade: { transmission: 0.85, roughness: 0.4, metalness: 0.1, color: '#ffffff' },
     },
     pos: opts.pos ?? [0, 2.4, 0],
+    ...(opts.installNormal !== undefined
+      ? { installNormal: opts.installNormal }
+      : {}),
     rot: opts.rot ?? { pitch: 0, yaw: 0 },
     photometric,
     electrical: {
